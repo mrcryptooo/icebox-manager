@@ -1,0 +1,19 @@
+# Environment variables — هرگز commit نکنید
+.env
+
+# Node modules
+node_modules/
+
+# SQLite database files
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+npm-debug.log*
+*.log
