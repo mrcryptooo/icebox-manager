@@ -1,10 +1,11 @@
 require('dotenv').config();
 const { Telegraf } = require('telegraf');
-const { handleStart, handleText } = require('./handlers');
+const { handleStart, handleText, handleId, handleHealth, handleExportCommand } = require('./handlers');
 const { initDatabase } = require('../../db/database');
+const { isAuthorized } = require('../../utils/auth');
+const MSG = require('./messages');
 
 // ─── پیام‌های روزانه ──────────────────────────────────────────────────────────
-// OWNER_ID را در .env تنظیم کنید: OWNER_ID=123456789
 const OWNER_ID = process.env.OWNER_ID ? Number(process.env.OWNER_ID) : null;
 
 const MORNING_QUOTES = [
@@ -27,47 +28,28 @@ function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-// زمان‌بندی پیام روزانه — هر دقیقه بررسی می‌شود
-// توجه: روی Railway سرور timezone ممکن است UTC باشد.
-// ایران UTC+3:30 است:
-//   ۹:۰۰ ایران = ۵:۳۰ UTC
-//   ۲۳:۳۰ ایران = ۲۰:۰۰ UTC
-// بعد از Deploy روی Railway اگر لازم بود ساعت را تنظیم کنید.
 function startDailyScheduler(bot) {
   if (!OWNER_ID) {
     console.log('ℹ️ OWNER_ID تنظیم نشده — پیام‌های روزانه غیرفعال است.');
     return;
   }
-
   let lastMorning = null;
   let lastEvening = null;
-
   setInterval(() => {
     const now = new Date();
     const h = now.getUTCHours();
     const m = now.getUTCMinutes();
     const dayKey = `${now.getUTCFullYear()}-${now.getUTCMonth()}-${now.getUTCDate()}`;
-
-    // صبح: ۵:۳۰ UTC = ۹:۰۰ ایران
     if (h === 5 && m === 30 && lastMorning !== dayKey) {
       lastMorning = dayKey;
-      const quote = pickRandom(MORNING_QUOTES);
       bot.telegram.sendMessage(OWNER_ID,
-        `🌅 صبح بخیر مدیر عزیز\n\n` +
-        `امروز هم یک فرصت تازه برای فروش بهتره.\n` +
-        `💡 ${quote}\n\n` +
-        `آخر روز فروش و مخارج رو ثبت کن تا گزارش‌هات دقیق بمونه.`
+        `🌅 صبح بخیر مدیر عزیز\n\nامروز هم یک فرصت تازه برای فروش بهتره.\n💡 ${pickRandom(MORNING_QUOTES)}\n\nآخر روز فروش و مخارج رو ثبت کن تا گزارش‌هات دقیق بمونه.`
       ).catch(() => {});
     }
-
-    // شب: ۲۰:۰۰ UTC = ۲۳:۳۰ ایران
     if (h === 20 && m === 0 && lastEvening !== dayKey) {
       lastEvening = dayKey;
-      const quote = pickRandom(EVENING_QUOTES);
       bot.telegram.sendMessage(OWNER_ID,
-        `🌙 شب بخیر\n\n` +
-        `قبل از بستن روز، فروش و خرج‌های امروز رو ثبت کن.\n` +
-        `💡 ${quote}`
+        `🌙 شب بخیر\n\nقبل از بستن روز، فروش و خرج‌های امروز رو ثبت کن.\n💡 ${pickRandom(EVENING_QUOTES)}`
       ).catch(() => {});
     }
   }, 60 * 1000);
@@ -83,19 +65,35 @@ if (!process.env.DATABASE_URL) {
   console.error('❌ خطا: DATABASE_URL در فایل .env تعریف نشده است.');
   process.exit(1);
 }
+if (!OWNER_ID) {
+  console.warn('⚠️ هشدار: OWNER_ID تنظیم نشده — هیچ کاربری نمی‌تواند از ربات استفاده کند.');
+}
 
 console.log('🤖 ربات IceBox Manager در حال بارگذاری است...');
 
 const bot = new Telegraf(token);
 
 async function main() {
-  // ─── اتصال به دیتابیس ────────────────────────────────────────────────────
   console.log('🗄️ در حال اتصال به دیتابیس PostgreSQL...');
   await initDatabase();
 
-  // ─── ثبت handler‌ها ──────────────────────────────────────────────────────
+  // ─── /id — برای همه کاربران (قبل از middleware احراز هویت) ─────────────────
+  bot.command('id', handleId);
+
+  // ─── middleware احراز هویت — همه پیام‌های بعدی بررسی می‌شوند ─────────────────
+  bot.use(async (ctx, next) => {
+    if (!isAuthorized(ctx)) {
+      return ctx.reply(MSG.unauthorized);
+    }
+    return next();
+  });
+
+  // ─── دستورات مجاز (فقط OWNER) ────────────────────────────────────────────────
   bot.start(handleStart);
-  bot.command('menu', handleStart);
+  bot.command('menu',   handleStart);
+  bot.command('health', handleHealth);
+  bot.command('export', handleExportCommand);
+
   bot.on('text', handleText);
 
   bot.catch((err, ctx) => {
@@ -103,7 +101,6 @@ async function main() {
     ctx.reply('⚠️ یک خطای داخلی رخ داد. لطفاً دوباره تلاش کنید.').catch(() => {});
   });
 
-  // ─── اجرای ربات ──────────────────────────────────────────────────────────
   console.log('🔑 در حال اتصال به تلگرام...');
   await bot.launch({}, () => {
     console.log('✅ اتصال به تلگرام برقرار شد. ربات آماده دریافت پیام است.');
@@ -115,15 +112,12 @@ async function main() {
 
 main().catch((err) => {
   console.error('❌ خطا در اجرای ربات:', err.message);
-  if (err.message?.includes('401')) {
+  if (err.message?.includes('401'))
     console.error('👉 توکن نامعتبر است. توکن را از @BotFather دریافت و در .env وارد کنید.');
-  }
-  if (err.message?.includes('ENOTFOUND') || err.message?.includes('ETIMEDOUT')) {
+  if (err.message?.includes('ENOTFOUND') || err.message?.includes('ETIMEDOUT'))
     console.error('👉 اتصال اینترنت یا دسترسی به api.telegram.org ممکن نیست.');
-  }
-  if (err.message?.includes('DATABASE_URL') || err.code === 'ECONNREFUSED') {
+  if (err.code === 'ECONNREFUSED' || err.message?.includes('CONNECTION'))
     console.error('👉 اتصال به دیتابیس ناموفق بود. DATABASE_URL را بررسی کنید.');
-  }
   process.exit(1);
 });
 

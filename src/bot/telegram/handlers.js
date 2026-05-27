@@ -1,5 +1,11 @@
+const path = require('path');
+const os   = require('os');
+const fs   = require('fs');
+
 const MSG = require('./messages');
 const KB = require('./keyboards');
+const { isOwner } = require('../../utils/auth');
+const { checkConnection } = require('../../db/database');
 const { findOrCreateUser } = require('../../core/userService');
 const { getAllBranches, getBranchById, createBranch } = require('../../core/branchService');
 const {
@@ -14,6 +20,10 @@ const {
   getDailyComparison, getWeeklyComparison, getMonthlyComparison,
   getCustomReport, getCustomAllBranches, getCustomComparison,
 } = require('../../core/reportService');
+const {
+  getAllSalesForExport, getAllExpensesForExport,
+  buildSalesCsv, buildExpensesCsv,
+} = require('../../core/exportService');
 const {
   getTodayDate,
   isValidDate,
@@ -975,7 +985,7 @@ async function handleText(ctx) {
     if (text === '❓ راهنما') {
       return ctx.reply(MSG.help, { parse_mode: 'Markdown', ...KB.mainMenu });
     }
-    if (text === '⚙️ تنظیمات') return ctx.reply(MSG.settings, KB.mainMenu);
+    if (text === '⚙️ تنظیمات') return startSettings(ctx);
     return ctx.reply(MSG.mainMenu, KB.mainMenu);
   }
 
@@ -1022,9 +1032,118 @@ async function handleText(ctx) {
   if (session.step && session.step.startsWith('edit_sale_'))      return handleEditSaleStep(ctx, text);
   if (session.step && session.step.startsWith('edit_expense_'))   return handleEditExpenseStep(ctx, text);
 
+  // ── تنظیمات و خروجی ────────────────────────────────────────────────────────
+  if (session.step === 'settings_menu') return handleSettingsMenu(ctx, text);
+  if (session.step === 'export_menu')   return handleExportMenuChoice(ctx, text);
+
   // fallback
   clearSession(userId);
   return ctx.reply(MSG.mainMenu, KB.mainMenu);
 }
 
-module.exports = { handleStart, handleText };
+// ═══════════════════════════════════════════════════════════════════════════════
+// /id — آیدی تلگرام (برای همه کاربران)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function handleId(ctx) {
+  const id = ctx.from?.id;
+  return ctx.reply(MSG.yourId(id), { parse_mode: 'Markdown' });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// /health — وضعیت سیستم (فقط OWNER)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function handleHealth(ctx) {
+  const dbOk = await checkConnection();
+  const now = new Date();
+  // زمان UTC
+  const serverTime = now.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+
+  const data = {
+    botStatus:   '✅ فعال',
+    dbStatus:    dbOk ? '✅ برقرار' : '❌ خطا',
+    serverTime,
+    environment: process.env.NODE_ENV || 'development',
+  };
+  return ctx.reply(MSG.healthStatus(data), { parse_mode: 'Markdown' });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// تنظیمات
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function startSettings(ctx) {
+  const session = getSession(ctx.from.id);
+  session.step = 'settings_menu';
+  session.data = {};
+  return ctx.reply(MSG.settings, { parse_mode: 'Markdown', ...KB.settingsKeyboard() });
+}
+
+async function handleSettingsMenu(ctx, text) {
+  if (text === '📤 خروجی اطلاعات') {
+    const session = getSession(ctx.from.id);
+    session.step = 'export_menu';
+    return ctx.reply(MSG.exportMenu, { parse_mode: 'Markdown', ...KB.exportMenuKeyboard() });
+  }
+  return ctx.reply(MSG.settings, { parse_mode: 'Markdown', ...KB.settingsKeyboard() });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// خروجی CSV
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function handleExportMenuChoice(ctx, text) {
+  if (text === '📊 خروجی فروش‌ها') return handleSalesCsvExport(ctx);
+  if (text === '💰 خروجی مخارج')   return handleExpensesCsvExport(ctx);
+  // ورودی نامعتبر: منو را دوباره نشان بده
+  return ctx.reply(MSG.exportMenu, { parse_mode: 'Markdown', ...KB.exportMenuKeyboard() });
+}
+
+async function handleSalesCsvExport(ctx) {
+  await ctx.reply(MSG.exportGenerating);
+  const rows = await getAllSalesForExport();
+  if (rows.length === 0) {
+    return ctx.reply(MSG.exportEmptySales);
+  }
+  const csv = '﻿' + buildSalesCsv(rows); // BOM برای نمایش صحیح در Excel
+  const tmpPath = path.join(os.tmpdir(), `icebox_sales_${Date.now()}.csv`);
+  fs.writeFileSync(tmpPath, csv, 'utf8');
+  try {
+    await ctx.replyWithDocument(
+      { source: fs.createReadStream(tmpPath), filename: 'sales_export.csv' },
+      { caption: `📊 خروجی فروش‌ها — ${rows.length} رکورد` }
+    );
+  } finally {
+    try { fs.unlinkSync(tmpPath); } catch (_) {}
+  }
+}
+
+async function handleExpensesCsvExport(ctx) {
+  await ctx.reply(MSG.exportGenerating);
+  const rows = await getAllExpensesForExport();
+  if (rows.length === 0) {
+    return ctx.reply(MSG.exportEmptyExpenses);
+  }
+  const csv = '﻿' + buildExpensesCsv(rows);
+  const tmpPath = path.join(os.tmpdir(), `icebox_expenses_${Date.now()}.csv`);
+  fs.writeFileSync(tmpPath, csv, 'utf8');
+  try {
+    await ctx.replyWithDocument(
+      { source: fs.createReadStream(tmpPath), filename: 'expenses_export.csv' },
+      { caption: `💰 خروجی مخارج — ${rows.length} رکورد` }
+    );
+  } finally {
+    try { fs.unlinkSync(tmpPath); } catch (_) {}
+  }
+}
+
+// ─── دستور /export (ورودی مستقیم) ────────────────────────────────────────────
+async function handleExportCommand(ctx) {
+  const session = getSession(ctx.from.id);
+  session.step = 'export_menu';
+  session.data = {};
+  return ctx.reply(MSG.exportMenu, { parse_mode: 'Markdown', ...KB.exportMenuKeyboard() });
+}
+
+module.exports = { handleStart, handleText, handleId, handleHealth, handleExportCommand };

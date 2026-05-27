@@ -111,6 +111,22 @@ function confirmDeleteKeyboard() {
   ]).resize();
 }
 
+// ─── تنظیمات ─────────────────────────────────────────────────────────────────
+function settingsKeyboard() {
+  return Markup.keyboard([
+    ['📤 خروجی اطلاعات'],
+    ['🏠 منوی اصلی'],
+  ]).resize();
+}
+
+// ─── منوی خروجی CSV ──────────────────────────────────────────────────────────
+function exportMenuKeyboard() {
+  return Markup.keyboard([
+    ['📊 خروجی فروش‌ها', '💰 خروجی مخارج'],
+    ['🏠 منوی اصلی'],
+  ]).resize();
+}
+
 // ─── انتخاب ماه شمسی ─────────────────────────────────────────────────────────
 function jalaliMonthsKeyboard() {
   return Markup.keyboard([
@@ -154,4 +170,6 @@ module.exports = {
   confirmDeleteKeyboard,
   jalaliMonthsKeyboard,
   jalaliDaysKeyboard,
+  settingsKeyboard,
+  exportMenuKeyboard,
 };

@@ -15,6 +15,9 @@
 - ویرایش و حذف فروش/مخارج
 - پیام‌های صبح بخیر و شب بخیر روزانه
 - رابط کاربری کاملاً فارسی با دکمه‌های emoji‌دار
+- **کنترل دسترسی:** فقط OWNER_ID می‌تواند از ربات استفاده کند
+- **خروجی CSV:** دانلود فایل فروش‌ها و مخارج برای بکاپ یا تحلیل
+- **دستورات مدیریتی:** `/health`، `/id`، `/export`
 
 ---
 
@@ -55,7 +58,9 @@ NODE_ENV=development
 
 برای دریافت `BOT_TOKEN`: به [@BotFather](https://t.me/BotFather) بروید و `/newbot` بزنید.
 
-برای دریافت `OWNER_ID`: به [@userinfobot](https://t.me/userinfobot) پیام بدهید.
+برای دریافت `OWNER_ID`: در تلگرام دستور `/id` به ربات بزنید، یا به [@userinfobot](https://t.me/userinfobot) پیام بدهید.
+
+> ⚠️ **مهم:** اگر `OWNER_ID` تنظیم نشود، هیچ کاربری نمی‌تواند از ربات استفاده کند.
 
 ### ۳. اجرای ربات
 
@@ -163,6 +168,65 @@ Railway بعد از تنظیم Variables خودکار ربات را deploy می�
 
 ---
 
+#### ۷. بکاپ دیتابیس PostgreSQL در Railway
+
+> ⚠️ **Railway به‌صورت خودکار بکاپ نمی‌گیرد** (مگر در پلن‌های Pro).
+>
+> توصیه‌ها:
+> - هفته‌ای یک بار از ربات خروجی CSV بگیرید (⚙️ تنظیمات → 📤 خروجی اطلاعات)
+> - برای بکاپ کامل دیتابیس از `pg_dump` استفاده کنید:
+>   ```
+>   pg_dump DATABASE_URL > backup_$(date +%Y%m%d).sql
+>   ```
+> - در Railway Pro می‌توانید Point-in-Time Recovery را فعال کنید
+
+---
+
+## امنیت و کنترل دسترسی
+
+### OWNER_ID
+
+ربات فقط برای کاربری با `OWNER_ID` مشخص‌شده در `.env` کار می‌کند.
+هر کاربر دیگری این پیام را می‌بیند:
+
+> 🚫 شما اجازه دسترسی به این ربات را ندارید.
+
+### استثنا: دستور `/id`
+
+دستور `/id` برای **همه کاربران** کار می‌کند تا بتوانند آیدی تلگرامشان را ببینند و به مالک بدهند.
+
+### توسعه در آینده
+
+اگر بخواهید مدیر شعبه اضافه کنید، فایل `src/utils/auth.js` را باز کنید و تابع `isAuthorized(ctx)` را توسعه دهید.
+
+---
+
+## دستورات ربات
+
+| دستور | دسترسی | توضیح |
+|-------|---------|-------|
+| `/start` یا `/menu` | OWNER | ورود به منوی اصلی |
+| `/id` | همه | نمایش آیدی عددی تلگرام |
+| `/health` | OWNER | بررسی وضعیت ربات و دیتابیس |
+| `/export` | OWNER | منوی خروجی CSV |
+
+---
+
+## خروجی CSV
+
+از مسیر **⚙️ تنظیمات → 📤 خروجی اطلاعات** یا دستور `/export`:
+
+| فایل | ستون‌ها |
+|------|---------|
+| `sales_export.csv` | id, branch_name, report_date, cash_amount, card_amount, transfer_amount, online_amount, total_amount, order_count, note, created_at |
+| `expenses_export.csv` | id, branch_name, expense_date, amount, category, note, created_at |
+
+- رکوردهای حذف‌شده (soft delete) در خروجی نمی‌آیند
+- فایل CSV با BOM (UTF-8) ذخیره می‌شود — در Excel فارسی‌ها درست نمایش داده می‌شوند
+- فایل موقت بعد از ارسال حذف می‌شود
+
+---
+
 ## ساختار پروژه
 
 ```
@@ -179,12 +243,14 @@ src/
     reportService.js  ← تولید گزارش‌های ترکیبی
     branchService.js  ← مدیریت شعبه‌ها
     userService.js    ← مدیریت کاربران
+    exportService.js  ← خروجی CSV فروش‌ها و مخارج
   db/
     database.js       ← اتصال PostgreSQL (pg Pool) و initDatabase
     schema.sql        ← طرح جداول دیتابیس (PostgreSQL)
   utils/
     formatMoney.js    ← تبدیل اعداد به فارسی با فرمت تومان
     date.js           ← توابع تاریخ شمسی و میلادی
+    auth.js           ← کنترل دسترسی (isOwner, isAuthorized)
 .env                  ← تنظیمات محیطی (باید بسازید — در .gitignore)
 .env.example          ← نمونه تنظیمات
 railway.json          ← تنظیمات Railway
@@ -232,6 +298,7 @@ railway.json          ← تنظیمات Railway
 | Phase 4.5 | Polish: emoji، کارت مالی، پیام‌های روزانه | ✅ |
 | Phase 5A | Deploy آزمایشی روی Railway با SQLite | ✅ |
 | Phase 5B | مهاجرت به PostgreSQL برای پایداری داده | ✅ |
+| Phase 6 | امنیت OWNER_ID، /health، /id، خروجی CSV | ✅ |
 
 ---
 

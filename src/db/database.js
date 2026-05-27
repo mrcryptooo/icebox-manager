@@ -24,4 +24,14 @@ async function initDatabase() {
   console.log('✅ دیتابیس PostgreSQL آماده است.');
 }
 
-module.exports = { query, initDatabase };
+// ─── بررسی اتصال دیتابیس (برای /health) ─────────────────────────────────────
+async function checkConnection() {
+  try {
+    await pool.query('SELECT 1');
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+module.exports = { query, initDatabase, checkConnection };
