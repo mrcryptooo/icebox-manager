@@ -89,7 +89,7 @@ function formatSaleData(sale, branch) {
 // ─── /start و /menu ───────────────────────────────────────────────────────────
 async function handleStart(ctx) {
   const tgUser = ctx.from;
-  const user = findOrCreateUser(tgUser.id, tgUser.first_name || tgUser.username);
+  const user = await findOrCreateUser(tgUser.id, tgUser.first_name || tgUser.username);
   clearSession(tgUser.id);
   await ctx.reply(MSG.welcome(user.name || tgUser.first_name), { parse_mode: 'Markdown', ...KB.mainMenu });
 }
@@ -107,7 +107,7 @@ async function startQuickAddBranch(ctx) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function startSaleFlow(ctx) {
-  const branches = getAllBranches();
+  const branches = await getAllBranches();
   if (branches.length === 0) {
     return ctx.reply(MSG.noBranchesAction, KB.noBranchesActionKeyboard());
   }
@@ -118,7 +118,7 @@ async function startSaleFlow(ctx) {
 }
 
 async function handleSaleBranch(ctx, branchName) {
-  const branches = getAllBranches();
+  const branches = await getAllBranches();
   const branch = branches.find(b => b.name === branchName);
   if (!branch) return ctx.reply(MSG.selectBranch, KB.branchKeyboard(branches));
   const session = getSession(ctx.from.id);
@@ -173,8 +173,8 @@ async function handleSaleStep(ctx, text) {
 
   if (step === 'sale_confirm') {
     if (text === '✅ تأیید و ذخیره') {
-      const user = findOrCreateUser(ctx.from.id, ctx.from.first_name);
-      recordSale({
+      const user = await findOrCreateUser(ctx.from.id, ctx.from.first_name);
+      await recordSale({
         branchId: data.branchId, userId: user.id, saleDate: data.saleDate,
         cashAmount: data.cash, posAmount: data.pos,
         cardTransferAmount: data.cardTransfer, onlineAmount: data.online,
@@ -199,7 +199,7 @@ async function handleSaleStep(ctx, text) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function startExpenseFlow(ctx) {
-  const branches = getAllBranches();
+  const branches = await getAllBranches();
   if (branches.length === 0) {
     return ctx.reply(MSG.noBranchesAction, KB.noBranchesActionKeyboard());
   }
@@ -210,7 +210,7 @@ async function startExpenseFlow(ctx) {
 }
 
 async function handleExpenseBranch(ctx, branchName) {
-  const branches = getAllBranches();
+  const branches = await getAllBranches();
   const branch = branches.find(b => b.name === branchName);
   if (!branch) return ctx.reply(MSG.selectBranch, KB.branchKeyboard(branches));
   const session = getSession(ctx.from.id);
@@ -262,8 +262,8 @@ async function handleExpenseStep(ctx, text) {
 
   if (step === 'expense_confirm') {
     if (text === '✅ تأیید و ذخیره') {
-      const user = findOrCreateUser(ctx.from.id, ctx.from.first_name);
-      recordExpense({
+      const user = await findOrCreateUser(ctx.from.id, ctx.from.first_name);
+      await recordExpense({
         branchId: data.branchId, userId: user.id, expenseDate: data.expenseDate,
         amount: data.amount, category: data.category, note: data.note,
       });
@@ -287,11 +287,11 @@ async function handleExpenseStep(ctx, text) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// جریان گزارش
+// جریان گزارش (کلاسیک — daily/weekly/monthly)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function startReportFlow(ctx, reportType) {
-  const branches = getAllBranches();
+  const branches = await getAllBranches();
   if (branches.length === 0) return ctx.reply(MSG.noBranches, KB.mainMenu);
   const session = getSession(ctx.from.id);
   session.step = `report_type_${reportType}`;
@@ -305,29 +305,29 @@ async function handleReportTypeSelection(ctx, text) {
 
   if (text === 'همه شعبه‌ها') {
     let report;
-    if (reportType === 'daily') report = getDailyAllBranches();
-    else if (reportType === 'weekly') report = getWeeklyAllBranches();
-    else report = getMonthlyAllBranches();
+    if (reportType === 'daily')        report = await getDailyAllBranches();
+    else if (reportType === 'weekly')  report = await getWeeklyAllBranches();
+    else                               report = await getMonthlyAllBranches();
     clearSession(ctx.from.id);
     return ctx.reply(report, KB.mainMenu);
   }
 
   if (text === 'یک شعبه') {
-    const branches = getAllBranches();
+    const branches = await getAllBranches();
     session.step = `report_branch_${reportType}`;
     return ctx.reply(MSG.selectBranchForReport, KB.branchKeyboard(branches));
   }
 }
 
 async function handleReportBranchSelection(ctx, branchName, reportType) {
-  const branches = getAllBranches();
+  const branches = await getAllBranches();
   const branch = branches.find(b => b.name === branchName);
   if (!branch) return ctx.reply(MSG.selectBranchForReport, KB.branchKeyboard(branches));
 
   let report;
-  if (reportType === 'daily') report = getDailyReport(branch.id);
-  else if (reportType === 'weekly') report = getWeeklyReport(branch.id);
-  else report = getMonthlyReport(branch.id);
+  if (reportType === 'daily')        report = await getDailyReport(branch.id);
+  else if (reportType === 'weekly')  report = await getWeeklyReport(branch.id);
+  else                               report = await getMonthlyReport(branch.id);
 
   clearSession(ctx.from.id);
   return ctx.reply(report, KB.mainMenu);
@@ -338,7 +338,7 @@ async function handleReportBranchSelection(ctx, branchName, reportType) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function startReportsMenu(ctx) {
-  const branches = getAllBranches();
+  const branches = await getAllBranches();
   if (branches.length === 0) return ctx.reply(MSG.noBranches, KB.mainMenu);
   const session = getSession(ctx.from.id);
   session.step = 'reports_menu';
@@ -347,7 +347,7 @@ async function startReportsMenu(ctx) {
 }
 
 async function handleReportsMenu(ctx, text) {
-  const branches = getAllBranches();
+  const branches = await getAllBranches();
   if (branches.length === 0) {
     clearSession(ctx.from.id);
     return ctx.reply(MSG.noBranches, KB.mainMenu);
@@ -356,8 +356,8 @@ async function handleReportsMenu(ctx, text) {
 
   if (text === '📊 گزارش امروز' || text === '📅 گزارش هفتگی' || text === '🗓️ گزارش ماهانه') {
     const typeMap = {
-      '📊 گزارش امروز': 'daily',
-      '📅 گزارش هفتگی': 'weekly',
+      '📊 گزارش امروز':  'daily',
+      '📅 گزارش هفتگی':  'weekly',
       '🗓️ گزارش ماهانه': 'monthly',
     };
     const reportType = typeMap[text];
@@ -376,7 +376,7 @@ async function handleReportsMenu(ctx, text) {
 // ─── مقایسه شعبه‌ها ───────────────────────────────────────────────────────────
 
 async function startCompareReport(ctx) {
-  const branches = getAllBranches();
+  const branches = await getAllBranches();
   if (branches.length < 2) {
     clearSession(ctx.from.id);
     return ctx.reply(MSG.notEnoughBranches, KB.mainMenu);
@@ -391,17 +391,17 @@ async function handleComparePeriod(ctx, text) {
   const session = getSession(ctx.from.id);
 
   if (text === '📊 امروز') {
-    const report = getDailyComparison();
+    const report = await getDailyComparison();
     clearSession(ctx.from.id);
     return ctx.reply(report, KB.mainMenu);
   }
   if (text === '📅 این هفته') {
-    const report = getWeeklyComparison();
+    const report = await getWeeklyComparison();
     clearSession(ctx.from.id);
     return ctx.reply(report, KB.mainMenu);
   }
   if (text === '🗓️ این ماه') {
-    const report = getMonthlyComparison();
+    const report = await getMonthlyComparison();
     clearSession(ctx.from.id);
     return ctx.reply(report, KB.mainMenu);
   }
@@ -437,12 +437,12 @@ async function handleDatepickMonth(ctx, text) {
     return ctx.reply(msg, KB.jalaliMonthsKeyboard());
   }
   const month = monthIndex + 1;
-  const year = session.data.datePickerYear;
-  session.data.datePickerMonth = month;
+  const year  = session.data.datePickerYear;
+  session.data.datePickerMonth     = month;
   session.data.datePickerMonthName = text;
   session.step = 'datepick_day';
   const mode = session.data.datePickerMode;
-  const msg = mode === 'start' ? MSG.pickStartDay(text) : MSG.pickEndDay(text);
+  const msg  = mode === 'start' ? MSG.pickStartDay(text) : MSG.pickEndDay(text);
   return ctx.reply(msg, KB.jalaliDaysKeyboard(month, year));
 }
 
@@ -451,7 +451,7 @@ async function handleDatepickDay(ctx, text) {
   const { datePickerMode, datePickerYear, datePickerMonth, datePickerMonthName } = session.data;
 
   const normalized = normalizeDateInput(text);
-  const day = parseInt(normalized, 10);
+  const day    = parseInt(normalized, 10);
   const maxDay = getJalaliMonthDays(datePickerMonth, datePickerYear);
 
   if (isNaN(day) || day < 1 || day > maxDay) {
@@ -467,7 +467,7 @@ async function handleDatepickDay(ctx, text) {
 
   if (datePickerMode === 'start') {
     session.data.startJalali = jStr;
-    session.data.startDate = gStr;
+    session.data.startDate   = gStr;
     await ctx.reply(MSG.startDateSelected(jStr));
     return startPickingDate(ctx, 'end');
   } else {
@@ -477,7 +477,7 @@ async function handleDatepickDay(ctx, text) {
       return startPickingDate(ctx, 'end');
     }
     session.data.endJalali = jStr;
-    session.data.endDate = gStr;
+    session.data.endDate   = gStr;
     await ctx.reply(MSG.endDateSelected(jStr));
     return finalizeDatePicker(ctx);
   }
@@ -489,15 +489,15 @@ async function finalizeDatePicker(ctx) {
 
   let report;
   if (datePickerFlow === 'compare') {
-    report = getCustomComparison(startDate, endDate);
+    report = await getCustomComparison(startDate, endDate);
   } else if (datePickerFlow === 'custom') {
     report = scope === 'all'
-      ? getCustomAllBranches(startDate, endDate)
-      : getCustomReport(branchId, startDate, endDate);
+      ? await getCustomAllBranches(startDate, endDate)
+      : await getCustomReport(branchId, startDate, endDate);
   } else if (datePickerFlow === 'branch') {
-    report = getCustomReport(branchId, startDate, endDate);
+    report = await getCustomReport(branchId, startDate, endDate);
   } else {
-    report = getCustomAllBranches(startDate, endDate);
+    report = await getCustomAllBranches(startDate, endDate);
   }
 
   clearSession(ctx.from.id);
@@ -507,7 +507,7 @@ async function finalizeDatePicker(ctx) {
 // ─── گزارش بازه دلخواه ───────────────────────────────────────────────────────
 
 async function startCustomReport(ctx) {
-  const branches = getAllBranches();
+  const branches = await getAllBranches();
   if (branches.length === 0) {
     clearSession(ctx.from.id);
     return ctx.reply(MSG.noBranches, KB.mainMenu);
@@ -521,26 +521,26 @@ async function startCustomReport(ctx) {
 async function handleCustomScope(ctx, text) {
   const session = getSession(ctx.from.id);
   if (text === 'همه شعبه‌ها') {
-    session.data.scope = 'all';
+    session.data.scope          = 'all';
     session.data.datePickerFlow = 'custom';
     return startPickingDate(ctx, 'start');
   }
   if (text === 'یک شعبه') {
-    const branches = getAllBranches();
+    const branches = await getAllBranches();
     session.data.scope = 'single';
-    session.step = 'custom_branch';
+    session.step       = 'custom_branch';
     return ctx.reply(MSG.selectBranchForReport, KB.branchKeyboard(branches));
   }
   return ctx.reply(MSG.selectReportType, KB.reportTypeKeyboard());
 }
 
 async function handleCustomBranch(ctx, text) {
-  const branches = getAllBranches();
+  const branches = await getAllBranches();
   const branch = branches.find(b => b.name === text);
   if (!branch) return ctx.reply(MSG.selectBranchForReport, KB.branchKeyboard(branches));
   const session = getSession(ctx.from.id);
-  session.data.branchId = branch.id;
-  session.data.branchName = branch.name;
+  session.data.branchId       = branch.id;
+  session.data.branchName     = branch.name;
   session.data.datePickerFlow = 'custom';
   return startPickingDate(ctx, 'start');
 }
@@ -550,7 +550,7 @@ async function handleCustomBranch(ctx, text) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function startBranchReport(ctx) {
-  const branches = getAllBranches();
+  const branches = await getAllBranches();
   if (branches.length === 0) {
     clearSession(ctx.from.id);
     return ctx.reply(MSG.noBranches, KB.mainMenu);
@@ -562,11 +562,11 @@ async function startBranchReport(ctx) {
 }
 
 async function handleBranchReportSelect(ctx, text) {
-  const branches = getAllBranches();
+  const branches = await getAllBranches();
   const branch = branches.find(b => b.name === text);
   if (!branch) return ctx.reply(MSG.selectBranchForReport, KB.branchKeyboard(branches));
   const session = getSession(ctx.from.id);
-  session.data.branchId = branch.id;
+  session.data.branchId   = branch.id;
   session.data.branchName = branch.name;
   session.step = 'branch_report_period';
   return ctx.reply(MSG.selectPeriod, KB.periodKeyboard());
@@ -577,17 +577,17 @@ async function handleBranchReportPeriod(ctx, text) {
   const { branchId } = session.data;
 
   if (text === '📊 امروز') {
-    const report = getDailyReport(branchId);
+    const report = await getDailyReport(branchId);
     clearSession(ctx.from.id);
     return ctx.reply(report, KB.mainMenu);
   }
   if (text === '📅 این هفته') {
-    const report = getWeeklyReport(branchId);
+    const report = await getWeeklyReport(branchId);
     clearSession(ctx.from.id);
     return ctx.reply(report, KB.mainMenu);
   }
   if (text === '🗓️ این ماه') {
-    const report = getMonthlyReport(branchId);
+    const report = await getMonthlyReport(branchId);
     clearSession(ctx.from.id);
     return ctx.reply(report, KB.mainMenu);
   }
@@ -613,7 +613,7 @@ async function handleBranchManage(ctx, text) {
   const session = getSession(ctx.from.id);
 
   if (text === '📋 لیست شعبه‌ها') {
-    const branches = getAllBranches();
+    const branches = await getAllBranches();
     clearSession(ctx.from.id);
     return ctx.reply(MSG.branchList(branches), KB.mainMenu);
   }
@@ -629,7 +629,7 @@ async function handleBranchManage(ctx, text) {
   }
   if (session.step === 'branch_add_address') {
     const address = text === 'ندارم' ? null : text.trim();
-    const branch = createBranch(session.data.branchName, address);
+    const branch = await createBranch(session.data.branchName, address);
     clearSession(ctx.from.id);
     return ctx.reply(MSG.branchCreated(branch.name), KB.mainMenu);
   }
@@ -666,7 +666,7 @@ async function handleViewRecentSales(ctx) {
   const session = getSession(ctx.from.id);
   session.step = 'records_menu'; // در منو بمان
 
-  const sales = getRecentSales(10);
+  const sales = await getRecentSales(10);
   if (sales.length === 0) {
     return ctx.reply(MSG.noRecordsYet('فروش'), KB.manageRecordsKeyboard());
   }
@@ -690,7 +690,7 @@ async function handleViewRecentExpenses(ctx) {
   const session = getSession(ctx.from.id);
   session.step = 'records_menu';
 
-  const expenses = getRecentExpenses(10);
+  const expenses = await getRecentExpenses(10);
   if (expenses.length === 0) {
     return ctx.reply(MSG.noRecordsYet('خرج'), KB.manageRecordsKeyboard());
   }
@@ -720,9 +720,9 @@ async function handleDeleteSaleStep(ctx, text) {
   if (step === 'delete_sale_id') {
     const id = parseId(text);
     if (!id) return ctx.reply(MSG.invalidId, KB.cancelKeyboard);
-    const sale = getSaleById(id);
+    const sale = await getSaleById(id);
     if (!sale) return ctx.reply(MSG.recordNotFound, KB.cancelKeyboard);
-    const branch = getBranchById(sale.branch_id);
+    const branch = await getBranchById(sale.branch_id);
     data.saleId = id;
     session.step = 'delete_sale_confirm';
     return ctx.reply(
@@ -733,7 +733,7 @@ async function handleDeleteSaleStep(ctx, text) {
 
   if (step === 'delete_sale_confirm') {
     if (text === '🗑️ بله، حذف شود') {
-      const ok = deleteSale(data.saleId);
+      const ok = await deleteSale(data.saleId);
       clearSession(ctx.from.id);
       if (ok) return ctx.reply(MSG.saleDeleted(data.saleId), KB.mainMenu);
       return ctx.reply(MSG.recordNotFound, KB.mainMenu);
@@ -758,9 +758,9 @@ async function handleDeleteExpenseStep(ctx, text) {
   if (step === 'delete_expense_id') {
     const id = parseId(text);
     if (!id) return ctx.reply(MSG.invalidId, KB.cancelKeyboard);
-    const expense = getExpenseById(id);
+    const expense = await getExpenseById(id);
     if (!expense) return ctx.reply(MSG.recordNotFound, KB.cancelKeyboard);
-    const branch = getBranchById(expense.branch_id);
+    const branch = await getBranchById(expense.branch_id);
     data.expenseId = id;
     session.step = 'delete_expense_confirm';
     return ctx.reply(
@@ -778,7 +778,7 @@ async function handleDeleteExpenseStep(ctx, text) {
 
   if (step === 'delete_expense_confirm') {
     if (text === '🗑️ بله، حذف شود') {
-      const ok = deleteExpense(data.expenseId);
+      const ok = await deleteExpense(data.expenseId);
       clearSession(ctx.from.id);
       if (ok) return ctx.reply(MSG.expenseDeleted(data.expenseId), KB.mainMenu);
       return ctx.reply(MSG.recordNotFound, KB.mainMenu);
@@ -797,11 +797,11 @@ async function startEditSale(ctx) {
 }
 
 const EDIT_SALE_NUMERIC_STEPS = [
-  { key: 'edit_sale_cash',   nextAsk: () => MSG.askPos,         nextStep: 'edit_sale_pos',    field: 'cash' },
-  { key: 'edit_sale_pos',    nextAsk: () => MSG.askCardTransfer, nextStep: 'edit_sale_card',   field: 'pos' },
-  { key: 'edit_sale_card',   nextAsk: () => MSG.askOnline,       nextStep: 'edit_sale_online', field: 'cardTransfer' },
-  { key: 'edit_sale_online', nextAsk: () => MSG.askOrderCount,   nextStep: 'edit_sale_orders', field: 'online' },
-  { key: 'edit_sale_orders', nextAsk: () => MSG.askNote,         nextStep: 'edit_sale_note',   field: 'orderCount' },
+  { key: 'edit_sale_cash',   nextAsk: () => MSG.askPos,          nextStep: 'edit_sale_pos',    field: 'cash' },
+  { key: 'edit_sale_pos',    nextAsk: () => MSG.askCardTransfer,  nextStep: 'edit_sale_card',   field: 'pos' },
+  { key: 'edit_sale_card',   nextAsk: () => MSG.askOnline,        nextStep: 'edit_sale_online', field: 'cardTransfer' },
+  { key: 'edit_sale_online', nextAsk: () => MSG.askOrderCount,    nextStep: 'edit_sale_orders', field: 'online' },
+  { key: 'edit_sale_orders', nextAsk: () => MSG.askNote,          nextStep: 'edit_sale_note',   field: 'orderCount' },
 ];
 
 async function handleEditSaleStep(ctx, text) {
@@ -811,15 +811,15 @@ async function handleEditSaleStep(ctx, text) {
   if (step === 'edit_sale_id') {
     const id = parseId(text);
     if (!id) return ctx.reply(MSG.invalidId, KB.cancelKeyboard);
-    const sale = getSaleById(id);
+    const sale = await getSaleById(id);
     if (!sale) return ctx.reply(MSG.recordNotFound, KB.cancelKeyboard);
-    const branch = getBranchById(sale.branch_id);
+    const branch = await getBranchById(sale.branch_id);
 
-    data.editId = sale.id;
-    data.branchId = sale.branch_id;
+    data.editId    = sale.id;
+    data.branchId  = sale.branch_id;
     data.branchName = branch ? branch.name : '—';
-    data.saleDate = sale.sale_date; // تاریخ اصلی حفظ می‌شود
-    session.step = 'edit_sale_cash';
+    data.saleDate  = sale.sale_date; // تاریخ اصلی حفظ می‌شود
+    session.step   = 'edit_sale_cash';
 
     return ctx.reply(
       MSG.showSaleForEdit(formatSaleData(sale, branch)) + '\n\n' + MSG.askCash,
@@ -844,7 +844,7 @@ async function handleEditSaleStep(ctx, text) {
 
   if (step === 'edit_sale_confirm') {
     if (text === '✅ تأیید و ذخیره') {
-      updateSale(data.editId, {
+      await updateSale(data.editId, {
         cashAmount: data.cash, posAmount: data.pos,
         cardTransferAmount: data.cardTransfer, onlineAmount: data.online,
         orderCount: data.orderCount, note: data.note,
@@ -878,15 +878,15 @@ async function handleEditExpenseStep(ctx, text) {
   if (step === 'edit_expense_id') {
     const id = parseId(text);
     if (!id) return ctx.reply(MSG.invalidId, KB.cancelKeyboard);
-    const expense = getExpenseById(id);
+    const expense = await getExpenseById(id);
     if (!expense) return ctx.reply(MSG.recordNotFound, KB.cancelKeyboard);
-    const branch = getBranchById(expense.branch_id);
+    const branch = await getBranchById(expense.branch_id);
 
-    data.editId = expense.id;
-    data.branchId = expense.branch_id;
+    data.editId     = expense.id;
+    data.branchId   = expense.branch_id;
     data.branchName = branch ? branch.name : '—';
     data.expenseDate = expense.expense_date;
-    session.step = 'edit_expense_amount';
+    session.step    = 'edit_expense_amount';
 
     return ctx.reply(
       MSG.showExpenseForEdit({
@@ -932,7 +932,7 @@ async function handleEditExpenseStep(ctx, text) {
 
   if (step === 'edit_expense_confirm') {
     if (text === '✅ تأیید و ذخیره') {
-      updateExpense(data.editId, {
+      await updateExpense(data.editId, {
         amount: data.amount, category: data.category, note: data.note,
       });
       const id = data.editId;
@@ -954,7 +954,7 @@ async function handleEditExpenseStep(ctx, text) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function handleText(ctx) {
-  const text = ctx.message.text;
+  const text   = ctx.message.text;
   const userId = ctx.from.id;
   const session = getSession(userId);
 
@@ -988,12 +988,12 @@ async function handleText(ctx) {
   if (session.step && session.step.startsWith('expense_')) return handleExpenseStep(ctx, text);
 
   // ── منوی گزارش‌ها ──────────────────────────────────────────────────────────
-  if (session.step === 'reports_menu')        return handleReportsMenu(ctx, text);
-  if (session.step === 'compare_period')      return handleComparePeriod(ctx, text);
-  if (session.step === 'datepick_month')      return handleDatepickMonth(ctx, text);
-  if (session.step === 'datepick_day')        return handleDatepickDay(ctx, text);
-  if (session.step === 'custom_scope')        return handleCustomScope(ctx, text);
-  if (session.step === 'custom_branch')       return handleCustomBranch(ctx, text);
+  if (session.step === 'reports_menu')          return handleReportsMenu(ctx, text);
+  if (session.step === 'compare_period')        return handleComparePeriod(ctx, text);
+  if (session.step === 'datepick_month')        return handleDatepickMonth(ctx, text);
+  if (session.step === 'datepick_day')          return handleDatepickDay(ctx, text);
+  if (session.step === 'custom_scope')          return handleCustomScope(ctx, text);
+  if (session.step === 'custom_branch')         return handleCustomBranch(ctx, text);
   if (session.step === 'branch_report_select')  return handleBranchReportSelect(ctx, text);
   if (session.step === 'branch_report_period')  return handleBranchReportPeriod(ctx, text);
 

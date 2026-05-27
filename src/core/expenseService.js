@@ -1,87 +1,100 @@
-const db = require('../db/database');
+const { query } = require('../db/database');
 
 // ─── ثبت خرج جدید ────────────────────────────────────────────────────────────
-function recordExpense({ branchId, userId, expenseDate, amount, category, note }) {
-  const info = db.prepare(`
+async function recordExpense({ branchId, userId, expenseDate, amount, category, note }) {
+  const result = await query(`
     INSERT INTO expenses (branch_id, user_id, expense_date, amount, category, note)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(branchId, userId, expenseDate, amount, category, note || null);
-  return getExpenseById(info.lastInsertRowid);
+    VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING id
+  `, [branchId, userId, expenseDate, amount, category, note || null]);
+  return getExpenseById(result.rows[0].id);
 }
 
 // ─── خواندن خرج ──────────────────────────────────────────────────────────────
-function getExpenseById(id) {
-  return db.prepare(
-    'SELECT * FROM expenses WHERE id = ? AND deleted_at IS NULL'
-  ).get(id);
+async function getExpenseById(id) {
+  const result = await query(
+    'SELECT * FROM expenses WHERE id = $1 AND deleted_at IS NULL',
+    [id]
+  );
+  return result.rows[0] || null;
 }
 
-function getExpensesByBranchAndDate(branchId, date) {
-  return db.prepare(
-    'SELECT * FROM expenses WHERE branch_id = ? AND expense_date = ? AND deleted_at IS NULL ORDER BY created_at DESC'
-  ).all(branchId, date);
+async function getExpensesByBranchAndDate(branchId, date) {
+  const result = await query(
+    'SELECT * FROM expenses WHERE branch_id = $1 AND expense_date = $2 AND deleted_at IS NULL ORDER BY created_at DESC',
+    [branchId, date]
+  );
+  return result.rows;
 }
 
-function getExpensesByDateRange(branchId, startDate, endDate) {
+async function getExpensesByDateRange(branchId, startDate, endDate) {
   if (branchId) {
-    return db.prepare(
-      'SELECT * FROM expenses WHERE branch_id = ? AND expense_date BETWEEN ? AND ? AND deleted_at IS NULL ORDER BY expense_date'
-    ).all(branchId, startDate, endDate);
+    const result = await query(
+      'SELECT * FROM expenses WHERE branch_id = $1 AND expense_date BETWEEN $2 AND $3 AND deleted_at IS NULL ORDER BY expense_date',
+      [branchId, startDate, endDate]
+    );
+    return result.rows;
   }
-  return db.prepare(
-    'SELECT * FROM expenses WHERE expense_date BETWEEN ? AND ? AND deleted_at IS NULL ORDER BY expense_date'
-  ).all(startDate, endDate);
+  const result = await query(
+    'SELECT * FROM expenses WHERE expense_date BETWEEN $1 AND $2 AND deleted_at IS NULL ORDER BY expense_date',
+    [startDate, endDate]
+  );
+  return result.rows;
 }
 
 // آخرین N خرج (با نام شعبه)
-function getRecentExpenses(limit = 10) {
-  return db.prepare(`
+async function getRecentExpenses(limit = 10) {
+  const result = await query(`
     SELECT e.*, b.name AS branch_name
     FROM expenses e
     LEFT JOIN branches b ON e.branch_id = b.id
     WHERE e.deleted_at IS NULL
     ORDER BY e.created_at DESC
-    LIMIT ?
-  `).all(limit);
+    LIMIT $1
+  `, [limit]);
+  return result.rows;
 }
 
 // ─── ویرایش خرج ──────────────────────────────────────────────────────────────
-function updateExpense(id, { amount, category, note }) {
-  db.prepare(`
+async function updateExpense(id, { amount, category, note }) {
+  await query(`
     UPDATE expenses
-    SET amount = ?, category = ?, note = ?
-    WHERE id = ? AND deleted_at IS NULL
-  `).run(amount, category, note || null, id);
+    SET amount = $1, category = $2, note = $3
+    WHERE id = $4 AND deleted_at IS NULL
+  `, [amount, category, note || null, id]);
   return getExpenseById(id);
 }
 
 // ─── حذف نرم (soft delete) ────────────────────────────────────────────────────
-function deleteExpense(id) {
-  const result = db.prepare(
-    'UPDATE expenses SET deleted_at = datetime(\'now\') WHERE id = ? AND deleted_at IS NULL'
-  ).run(id);
-  return result.changes > 0;
+async function deleteExpense(id) {
+  const result = await query(
+    'UPDATE expenses SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL',
+    [id]
+  );
+  return result.rowCount > 0;
 }
 
 // ─── بیشترین دسته خرج در بازه ────────────────────────────────────────────────
-function getTopExpenseCategoryForRange(branchId, startDate, endDate) {
+async function getTopExpenseCategoryForRange(branchId, startDate, endDate) {
   if (branchId) {
-    return db.prepare(`
+    const result = await query(`
       SELECT category, SUM(amount) AS total
       FROM expenses
-      WHERE branch_id = ? AND expense_date BETWEEN ? AND ? AND deleted_at IS NULL
+      WHERE branch_id = $1 AND expense_date BETWEEN $2 AND $3 AND deleted_at IS NULL
       GROUP BY category ORDER BY total DESC LIMIT 1
-    `).get(branchId, startDate, endDate) || null;
+    `, [branchId, startDate, endDate]);
+    return result.rows[0] || null;
   }
-  return db.prepare(`
+  const result = await query(`
     SELECT category, SUM(amount) AS total
     FROM expenses
-    WHERE expense_date BETWEEN ? AND ? AND deleted_at IS NULL
+    WHERE expense_date BETWEEN $1 AND $2 AND deleted_at IS NULL
     GROUP BY category ORDER BY total DESC LIMIT 1
-  `).get(startDate, endDate) || null;
+  `, [startDate, endDate]);
+  return result.rows[0] || null;
 }
 
-// ─── جمع‌بندی ─────────────────────────────────────────────────────────────────
+// ─── جمع‌بندی (pure — بدون نیاز به async) ────────────────────────────────────
 function aggregateExpenses(rows) {
   return rows.reduce((acc, row) => acc + (row.amount || 0), 0);
 }

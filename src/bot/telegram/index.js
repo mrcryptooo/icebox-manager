@@ -1,6 +1,7 @@
 require('dotenv').config();
 const { Telegraf } = require('telegraf');
 const { handleStart, handleText } = require('./handlers');
+const { initDatabase } = require('../../db/database');
 
 // ─── پیام‌های روزانه ──────────────────────────────────────────────────────────
 // OWNER_ID را در .env تنظیم کنید: OWNER_ID=123456789
@@ -72,34 +73,47 @@ function startDailyScheduler(bot) {
   }, 60 * 1000);
 }
 
-console.log('🤖 ربات IceBox Manager در حال بارگذاری است...');
-
+// ─── بررسی متغیرهای محیطی ────────────────────────────────────────────────────
 const token = process.env.BOT_TOKEN;
 if (!token) {
   console.error('❌ خطا: BOT_TOKEN در فایل .env تعریف نشده است.');
   process.exit(1);
 }
+if (!process.env.DATABASE_URL) {
+  console.error('❌ خطا: DATABASE_URL در فایل .env تعریف نشده است.');
+  process.exit(1);
+}
 
-console.log('🔑 توکن پیدا شد. در حال اتصال به تلگرام...');
+console.log('🤖 ربات IceBox Manager در حال بارگذاری است...');
 
 const bot = new Telegraf(token);
 
-bot.start(handleStart);
-bot.command('menu', handleStart);
-bot.on('text', handleText);
+async function main() {
+  // ─── اتصال به دیتابیس ────────────────────────────────────────────────────
+  console.log('🗄️ در حال اتصال به دیتابیس PostgreSQL...');
+  await initDatabase();
 
-bot.catch((err, ctx) => {
-  console.error(`خطا برای کاربر ${ctx.from?.id}:`, err);
-  ctx.reply('⚠️ یک خطای داخلی رخ داد. لطفاً دوباره تلاش کنید.').catch(() => {});
-});
+  // ─── ثبت handler‌ها ──────────────────────────────────────────────────────
+  bot.start(handleStart);
+  bot.command('menu', handleStart);
+  bot.on('text', handleText);
 
-// در Telegraf 4.x پس از launch()، callback دوم بعد از getMe() اجرا می‌شود
-bot.launch({}, () => {
-  console.log('✅ اتصال به تلگرام برقرار شد. ربات آماده دریافت پیام است.');
-  console.log(`🏪 نام ربات: @${bot.botInfo?.username ?? 'IceBoxManagerBot'}`);
-  console.log('👉 حالا در تلگرام /start بزنید.');
-  startDailyScheduler(bot);
-}).catch((err) => {
+  bot.catch((err, ctx) => {
+    console.error(`خطا برای کاربر ${ctx.from?.id}:`, err);
+    ctx.reply('⚠️ یک خطای داخلی رخ داد. لطفاً دوباره تلاش کنید.').catch(() => {});
+  });
+
+  // ─── اجرای ربات ──────────────────────────────────────────────────────────
+  console.log('🔑 در حال اتصال به تلگرام...');
+  await bot.launch({}, () => {
+    console.log('✅ اتصال به تلگرام برقرار شد. ربات آماده دریافت پیام است.');
+    console.log(`🏪 نام ربات: @${bot.botInfo?.username ?? 'IceBoxManagerBot'}`);
+    console.log('👉 حالا در تلگرام /start بزنید.');
+    startDailyScheduler(bot);
+  });
+}
+
+main().catch((err) => {
   console.error('❌ خطا در اجرای ربات:', err.message);
   if (err.message?.includes('401')) {
     console.error('👉 توکن نامعتبر است. توکن را از @BotFather دریافت و در .env وارد کنید.');
@@ -107,14 +121,11 @@ bot.launch({}, () => {
   if (err.message?.includes('ENOTFOUND') || err.message?.includes('ETIMEDOUT')) {
     console.error('👉 اتصال اینترنت یا دسترسی به api.telegram.org ممکن نیست.');
   }
+  if (err.message?.includes('DATABASE_URL') || err.code === 'ECONNREFUSED') {
+    console.error('👉 اتصال به دیتابیس ناموفق بود. DATABASE_URL را بررسی کنید.');
+  }
   process.exit(1);
 });
 
-process.once('SIGINT', () => {
-  console.log('\n🛑 ربات در حال توقف است...');
-  bot.stop('SIGINT');
-});
-process.once('SIGTERM', () => {
-  console.log('\n🛑 ربات در حال توقف است...');
-  bot.stop('SIGTERM');
-});
+process.once('SIGINT',  () => { console.log('\n🛑 ربات در حال توقف است...'); bot.stop('SIGINT'); });
+process.once('SIGTERM', () => { console.log('\n🛑 ربات در حال توقف است...'); bot.stop('SIGTERM'); });

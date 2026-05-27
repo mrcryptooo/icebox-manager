@@ -20,8 +20,8 @@
 
 ## پیش‌نیازها
 
-- [Node.js](https://nodejs.org) نسخه **22.5 یا بالاتر** (توصیه: Node 24)
-  > ⚠️ این پروژه از ماژول `node:sqlite` استفاده می‌کند که از Node 22.5+ پشتیبانی می‌شود و در Node 24 پایدار است. نسخه‌های قدیمی‌تر کار نمی‌کنند.
+- [Node.js](https://nodejs.org) نسخه **18 یا بالاتر** (توصیه: Node 20 LTS یا Node 22)
+- یک سرور **PostgreSQL** (محلی یا Railway)
 - یک ربات تلگرام از [@BotFather](https://t.me/BotFather)
 
 ---
@@ -49,7 +49,7 @@ cp .env.example .env
 ```env
 BOT_TOKEN=توکن_ربات_شما_از_BotFather
 OWNER_ID=آیدی_عددی_تلگرام_شما
-DB_PATH=./data/icebox.db
+DATABASE_URL=postgresql://user:password@localhost:5432/icebox
 NODE_ENV=development
 ```
 
@@ -71,17 +71,7 @@ npm start
 
 ## استقرار روی Railway
 
-### ⚠️ هشدار مهم — SQLite و پایداری داده
-
-> **این Deploy آزمایشی با SQLite است.**
->
-> Railway یک محیط ephemeral (ناپایدار) دارد. با هر بار restart سرور، فایل SQLite ممکن است پاک شود و **تمام داده‌های مالی از دست برود**.
->
-> برای استفاده واقعی و حفظ امن اطلاعات مالی:
-> - اطلاعات را به‌صورت منظم backup بگیرید
-> - در **Phase 5B** باید به PostgreSQL مهاجرت کنید
->
-> این نسخه فقط برای **تست عملکرد ربات** مناسب است.
+این پروژه از **PostgreSQL** استفاده می‌کند. Railway یک سرویس PostgreSQL مدیریت‌شده ارائه می‌دهد که داده‌ها در آن پایدار می‌مانند.
 
 ---
 
@@ -119,6 +109,14 @@ git push -u origin main
 
 ---
 
+#### ۲.۵ افزودن سرویس PostgreSQL در Railway
+
+۱. در پنل پروژه Railway روی **+ New** کلیک کنید
+۲. **Database → Add PostgreSQL** را انتخاب کنید
+۳. Railway به‌صورت خودکار متغیر `DATABASE_URL` را در سرویس ربات تنظیم می‌کند
+
+---
+
 #### ۳. تنظیم Environment Variables در Railway
 
 در پنل Railway، به تب **Variables** بروید و این متغیرها را اضافه کنید:
@@ -127,7 +125,7 @@ git push -u origin main
 |-----------|-------|-------|
 | `BOT_TOKEN` | توکن ربات تلگرام | از @BotFather |
 | `OWNER_ID` | شناسه عددی تلگرام | از @userinfobot |
-| `DB_PATH` | `/app/data/icebox.db` | مسیر دیتابیس روی سرور |
+| `DATABASE_URL` | (خودکار) | توسط سرویس PostgreSQL تنظیم می‌شود |
 | `NODE_ENV` | `production` | محیط اجرا |
 
 > **نکته timezone:** سرور Railway با timezone **UTC** کار می‌کند.
@@ -182,13 +180,11 @@ src/
     branchService.js  ← مدیریت شعبه‌ها
     userService.js    ← مدیریت کاربران
   db/
-    database.js       ← اتصال SQLite و مقداردهی اولیه
-    schema.sql        ← طرح جداول دیتابیس
+    database.js       ← اتصال PostgreSQL (pg Pool) و initDatabase
+    schema.sql        ← طرح جداول دیتابیس (PostgreSQL)
   utils/
     formatMoney.js    ← تبدیل اعداد به فارسی با فرمت تومان
     date.js           ← توابع تاریخ شمسی و میلادی
-data/
-  icebox.db           ← فایل دیتابیس (ساخته می‌شود — در .gitignore)
 .env                  ← تنظیمات محیطی (باید بسازید — در .gitignore)
 .env.example          ← نمونه تنظیمات
 railway.json          ← تنظیمات Railway
@@ -235,7 +231,7 @@ railway.json          ← تنظیمات Railway
 | Phase 4 | گزارش‌های پیشرفته، تاریخ شمسی، مقایسه شعبه‌ها | ✅ |
 | Phase 4.5 | Polish: emoji، کارت مالی، پیام‌های روزانه | ✅ |
 | Phase 5A | Deploy آزمایشی روی Railway با SQLite | ✅ |
-| Phase 5B | مهاجرت به PostgreSQL برای پایداری داده | ⏳ |
+| Phase 5B | مهاجرت به PostgreSQL برای پایداری داده | ✅ |
 
 ---
 

@@ -1,27 +1,42 @@
-const db = require('../db/database');
+const { query } = require('../db/database');
 
-function getAllBranches() {
-  return db.prepare('SELECT * FROM branches WHERE is_active = 1 ORDER BY id').all();
+// ─── خواندن شعبه‌ها ───────────────────────────────────────────────────────────
+async function getAllBranches() {
+  const result = await query(
+    'SELECT * FROM branches WHERE is_active = 1 ORDER BY id'
+  );
+  return result.rows;
 }
 
-function getBranchById(id) {
-  return db.prepare('SELECT * FROM branches WHERE id = ?').get(id);
+async function getBranchById(id) {
+  const result = await query(
+    'SELECT * FROM branches WHERE id = $1',
+    [id]
+  );
+  return result.rows[0] || null;
 }
 
-function createBranch(name, address) {
-  const info = db.prepare(
-    'INSERT INTO branches (name, address) VALUES (?, ?)'
-  ).run(name, address || null);
-  return db.prepare('SELECT * FROM branches WHERE id = ?').get(info.lastInsertRowid);
+// ─── ساخت شعبه ───────────────────────────────────────────────────────────────
+async function createBranch(name, address) {
+  const result = await query(
+    'INSERT INTO branches (name, address) VALUES ($1, $2) RETURNING *',
+    [name, address || null]
+  );
+  return result.rows[0];
 }
 
-function updateBranch(id, name, address) {
-  db.prepare('UPDATE branches SET name = ?, address = ? WHERE id = ?').run(name, address || null, id);
+// ─── ویرایش شعبه ─────────────────────────────────────────────────────────────
+async function updateBranch(id, name, address) {
+  await query(
+    'UPDATE branches SET name = $1, address = $2 WHERE id = $3',
+    [name, address || null, id]
+  );
   return getBranchById(id);
 }
 
-function deactivateBranch(id) {
-  db.prepare('UPDATE branches SET is_active = 0 WHERE id = ?').run(id);
+// ─── غیرفعال کردن شعبه ───────────────────────────────────────────────────────
+async function deactivateBranch(id) {
+  await query('UPDATE branches SET is_active = 0 WHERE id = $1', [id]);
 }
 
 module.exports = { getAllBranches, getBranchById, createBranch, updateBranch, deactivateBranch };
