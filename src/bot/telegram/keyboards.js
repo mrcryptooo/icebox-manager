@@ -90,6 +90,12 @@ function getMainMenuDynamic(biz) {
     rows.push(['📦 انبار']);
   }
 
+  // ردیف ۵c: حساب پرسنل
+  if (hasAll || has('payroll.view') || has('payroll.manage') ||
+      has('payroll.pay') || has('payroll.adjust')) {
+    rows.push(['👥 حساب پرسنل']);
+  }
+
   // ردیف ۶: مجوزها (super_admin) + تنظیمات
   const r5 = [];
   if (role === 'super_admin')                r5.push('🔑 مجوزها');
@@ -249,6 +255,7 @@ function exportMenuKeyboard() {
     ['📊 خروجی فروش‌ها', '💰 خروجی مخارج'],
     ['🛒 خروجی خریدهای مواد'],
     ['📦 خروجی انبار'],
+    ['📋 خروجی حقوق پرسنل'],
     ['🏠 منوی اصلی'],
   ]).resize();
 }
@@ -328,6 +335,7 @@ function permissionsKeyboard(perms) {
     'suppliers.manage',   'purchases.create',    'purchases.view',
     'supplier_payments.create', 'supplier_accounts.view',
     'inventory.view',     'inventory.manage',    'inventory.consume', 'inventory.adjust',
+    'payroll.view',       'payroll.manage',      'payroll.pay',       'payroll.adjust',
   ];
   const LBL = {
     'sales.create': 'ثبت فروش', 'sales.view': 'مشاهده فروش',
@@ -346,6 +354,10 @@ function permissionsKeyboard(perms) {
     'inventory.manage': 'مدیریت انبار',
     'inventory.consume': 'ثبت مصرف انبار',
     'inventory.adjust': 'اصلاح موجودی انبار',
+    'payroll.view':    'مشاهده حقوق پرسنل',
+    'payroll.manage':  'مدیریت حقوق پرسنل',
+    'payroll.pay':     'ثبت پرداخت حقوق',
+    'payroll.adjust':  'اصلاح حساب پرسنل',
   };
   const rows = ALL.map(p => [`${permsArr.includes(p) ? '✅' : '❌'} ${LBL[p]}`]);
   rows.push(['🔄 بازگردانی پیش‌فرض نقش']);
@@ -470,6 +482,42 @@ function inventoryItemSelectKeyboard(items) {
   return Markup.keyboard(rows).resize();
 }
 
+// ─── منوی حساب پرسنل (Phase 8D) ──────────────────────────────────────────────
+function payrollMenuKeyboard() {
+  return Markup.keyboard([
+    ['📋 لیست حساب پرسنل', '💰 تعیین حقوق پایه'],
+    ['💵 ثبت پرداخت حقوق', '🧾 ثبت برداشت / علی‌الحساب'],
+    ['🍦 ثبت مصرف داخلی', '🎁 ثبت پاداش'],
+    ['➖ ثبت کسری / جریمه', '📊 گزارش حقوق ماه'],
+    ['🏠 منوی اصلی'],
+  ]).resize();
+}
+
+// ─── انتخاب کارمند از لیست (Phase 8D) ───────────────────────────────────────
+function staffSelectKeyboard(members) {
+  const NUMS = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+  const RLBL = {
+    super_admin: 'سوپرادمین', business_owner: 'مالک',
+    manager: 'سرپرست', staff: 'کارمند', accountant: 'حسابدار',
+  };
+  const rows = members.map((m, i) => {
+    const num  = NUMS[i] || `${i + 1}.`;
+    const name = m.display_name || m.name || `کاربر ${m.telegram_id}`;
+    const role = RLBL[m.role] || m.role;
+    return [`${num} ${name} — ${role}`];
+  });
+  rows.push(['❌ لغو', '🏠 منوی اصلی']);
+  return Markup.keyboard(rows).resize();
+}
+
+// ─── انتخاب نوع حقوق (Phase 8D) ─────────────────────────────────────────────
+function salaryTypeKeyboard() {
+  return Markup.keyboard([
+    ['ماهانه', 'روزانه', 'ساعتی'],
+    ['❌ لغو'],
+  ]).resize();
+}
+
 // ─── عملیات روی بخش قفل‌شده/آزاد ────────────────────────────────────────────
 function lockSectionActionKeyboard(hasLock) {
   if (hasLock) {
@@ -528,4 +576,7 @@ module.exports = {
   expenseDetailPeriodKeyboard,
   inventoryMenuKeyboard,
   inventoryItemSelectKeyboard,
+  payrollMenuKeyboard,
+  staffSelectKeyboard,
+  salaryTypeKeyboard,
 };

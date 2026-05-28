@@ -126,6 +126,24 @@ function buildInventoryCsv(rows) {
   return lines.join('\r\n');
 }
 
+function buildStaffTransactionsCsv(rows) {
+  const header = 'id,staff_name,role,transaction_type,amount,transaction_date,note,created_at';
+  const lines = [header];
+  for (const r of rows) {
+    lines.push([
+      r.id,
+      escapeCell(r.staff_name),
+      escapeCell(r.role),
+      escapeCell(r.transaction_type),
+      r.amount || 0,
+      r.transaction_date,
+      escapeCell(r.note),
+      fmtTime(r.created_at),
+    ].join(','));
+  }
+  return lines.join('\r\n');
+}
+
 module.exports = {
   getAllSalesForExport,
   getAllExpensesForExport,
@@ -133,4 +151,5 @@ module.exports = {
   buildExpensesCsv,
   buildPurchasesCsv,
   buildInventoryCsv,
+  buildStaffTransactionsCsv,
 };

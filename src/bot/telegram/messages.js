@@ -906,6 +906,132 @@ const MSG = {
     return lines.join('\n');
   },
 
+  exportEmptyStaffTransactions: '⚠️ هیچ تراکنش پرسنلی برای خروجی وجود ندارد.',
+
+  // ─── حساب پرسنل (Phase 8D) ────────────────────────────────────────────────
+  payrollMenu: '👥 *حساب پرسنل*\n\nاز منوی زیر انتخاب کنید:',
+
+  noStaffMembers: '⚠️ هیچ کارمند فعالی در سیستم ثبت نشده است.',
+
+  selectStaffMember: '👤 کارمند مورد نظر را انتخاب کنید:',
+
+  askBaseSalaryAmount: (name) =>
+    `💰 *تعیین حقوق پایه — ${name}*\n\n` +
+    `مبلغ حقوق پایه را وارد کنید (تومان):`,
+
+  askSalaryType: '📋 نوع حقوق را انتخاب کنید:',
+
+  salarySaved: (name, amount, salaryType) => {
+    const pd  = '۰۱۲۳۴۵۶۷۸۹'.split('');
+    const fmt = n => Math.round(Number(n) || 0).toLocaleString('en-US').replace(/\d/g, d => pd[d]);
+    const typeMap = { monthly: 'ماهانه', daily: 'روزانه', hourly: 'ساعتی' };
+    return `✅ حقوق پایه با موفقیت ذخیره شد.\n\n` +
+      `👤 ${name}\n` +
+      `💰 حقوق پایه: ${fmt(amount)} تومان\n` +
+      `📋 نوع: ${typeMap[salaryType] || salaryType}`;
+  },
+
+  askTransactionAmount: (typeName, name) =>
+    `💵 *${typeName}*\n\n` +
+    `👤 کارمند: ${name}\n\n` +
+    `مبلغ را وارد کنید (تومان):`,
+
+  askTransactionNote:
+    '📝 توضیح یا یادداشت (اختیاری):\n' +
+    '(متن وارد کنید یا «ندارم» بنویسید)',
+
+  confirmTransaction: (d) => {
+    const pd  = '۰۱۲۳۴۵۶۷۸۹'.split('');
+    const fmt = n => Math.round(Number(n) || 0).toLocaleString('en-US').replace(/\d/g, d => pd[d]);
+    return `📋 *تأیید تراکنش — بررسی کنید:*\n\n` +
+      `👤 کارمند: ${d.staffName}\n` +
+      `📌 نوع: ${d.typeName}\n` +
+      `💵 مبلغ: ${fmt(d.amount)} تومان\n` +
+      `📅 تاریخ: ${d.date}\n` +
+      (d.note ? `📝 یادداشت: ${d.note}\n` : '') +
+      `\nبرای ذخیره «✅ تأیید و ذخیره» بزنید.`;
+  },
+
+  transactionSaved: (d) => {
+    const pd  = '۰۱۲۳۴۵۶۷۸۹'.split('');
+    const fmt = n => Math.round(Number(n) || 0).toLocaleString('en-US').replace(/\d/g, d => pd[d]);
+    return `✅ تراکنش با موفقیت ثبت شد.\n\n` +
+      `👤 ${d.staffName} | 📌 ${d.typeName}\n` +
+      `💵 ${fmt(d.amount)} تومان | 📅 ${d.date}` +
+      (d.note ? `\n📝 ${d.note}` : '');
+  },
+
+  staffAccountSummary: (d) => {
+    const pd  = '۰۱۲۳۴۵۶۷۸۹'.split('');
+    const fmt = n => Math.round(Number(n) || 0).toLocaleString('en-US').replace(/\d/g, d => pd[d]);
+    const sep = '─'.repeat(26);
+    const typeMap = { monthly: 'ماهانه', daily: 'روزانه', hourly: 'ساعتی' };
+    const salaryTypeLbl = typeMap[d.salaryType] || d.salaryType || 'ماهانه';
+    const balSign = d.balance >= 0 ? '🟢' : '🔴';
+    return `👤 *حساب ${d.displayName}*\n${sep}\n` +
+      `💰 حقوق پایه: ${fmt(d.baseSalary)} تومان (${salaryTypeLbl})\n` +
+      `🎁 پاداش: ${fmt(d.bonus)} تومان\n` +
+      `${sep}\n` +
+      `💵 پرداخت حقوق: ${fmt(d.salaryPayment)} تومان\n` +
+      `🧾 برداشت / علی‌الحساب: ${fmt(d.advance)} تومان\n` +
+      `🍦 مصرف داخلی: ${fmt(d.internalConsumption)} تومان\n` +
+      `➖ کسری / جریمه: ${fmt(d.deduction)} تومان\n` +
+      `${sep}\n` +
+      `${balSign} *مانده قابل پرداخت: ${fmt(d.balance)} تومان*`;
+  },
+
+  allStaffAccountSummaries: (summaries) => {
+    if (summaries.length === 0) return '⚠️ هیچ کارمند فعالی در سیستم ثبت نشده است.';
+    const pd  = '۰۱۲۳۴۵۶۷۸۹'.split('');
+    const fmt = n => Math.round(Number(n) || 0).toLocaleString('en-US').replace(/\d/g, d => pd[d]);
+    const sep = '─'.repeat(26);
+    const lines = [`👥 *خلاصه حساب پرسنل*\n${sep}`];
+    let totalBalance = 0;
+    summaries.forEach((s, i) => {
+      const balSign = s.balance >= 0 ? '🟢' : '🔴';
+      totalBalance += s.balance;
+      lines.push(
+        `\n${i + 1}. *${s.displayName}*\n` +
+        `   💰 حقوق پایه: ${fmt(s.baseSalary)} | پاداش: ${fmt(s.bonus)}\n` +
+        `   💵 پرداخت‌شده: ${fmt(s.salaryPayment + s.advance + s.internalConsumption)}\n` +
+        `   ${balSign} مانده: ${fmt(s.balance)} تومان`
+      );
+    });
+    const totalSign = totalBalance >= 0 ? '🟢' : '🔴';
+    lines.push(`\n${sep}\n${totalSign} *جمع مانده‌ها: ${fmt(totalBalance)} تومان*`);
+    return lines.join('\n');
+  },
+
+  monthlyPayrollReport: (report) => {
+    const pd  = '۰۱۲۳۴۵۶۷۸۹'.split('');
+    const fmt = n => Math.round(Number(n) || 0).toLocaleString('en-US').replace(/\d/g, d => pd[d]);
+    const sep = '─'.repeat(28);
+    const typeMap = { monthly: 'ماهانه', daily: 'روزانه', hourly: 'ساعتی' };
+    const lines = [
+      `📊 *گزارش حقوق پرسنل*\n📅 از ${report.startDate} تا ${report.endDate}\n${sep}`
+    ];
+    report.rows.forEach((r, i) => {
+      const balSign = r.balance >= 0 ? '🟢' : '🔴';
+      lines.push(
+        `\n${i + 1}. *${r.displayName}* (${typeMap[r.salaryType] || r.salaryType})\n` +
+        `   💰 حقوق: ${fmt(r.baseSalary)} | 🎁 پاداش: ${fmt(r.bonus)}\n` +
+        `   💵 پرداخت: ${fmt(r.salaryPayment)} | 🧾 برداشت: ${fmt(r.advance)}\n` +
+        `   🍦 مصرف: ${fmt(r.internalConsumption)} | ➖ کسری: ${fmt(r.deduction)}\n` +
+        `   ${balSign} مانده: ${fmt(r.balance)} تومان`
+      );
+    });
+    const t = report.totals;
+    const totalSign = t.balance >= 0 ? '🟢' : '🔴';
+    lines.push(
+      `\n${sep}\n` +
+      `💰 *جمع حقوق پایه: ${fmt(t.baseSalary)} تومان*\n` +
+      `💵 جمع پرداختی: ${fmt(t.salaryPayment)} تومان\n` +
+      `🎁 جمع پاداش: ${fmt(t.bonus)} تومان\n` +
+      `${totalSign} *جمع مانده: ${fmt(t.balance)} تومان*`
+    );
+    return lines.join('\n');
+  },
+
   inventoryMovements: (movements) => {
     const pd        = '۰۱۲۳۴۵۶۷۸۹'.split('');
     const fmt       = n => String(Math.round(Math.abs(Number(n)) || 0)).replace(/\d/g, d => pd[d]);

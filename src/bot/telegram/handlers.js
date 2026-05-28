@@ -33,7 +33,15 @@ const {
 const {
   getAllSalesForExport, getAllExpensesForExport,
   buildSalesCsv, buildExpensesCsv, buildPurchasesCsv, buildInventoryCsv,
+  buildStaffTransactionsCsv,
 } = require('../../core/exportService');
+const {
+  TRANSACTION_TYPE_LABELS, SALARY_TYPE_LABELS,
+  getOrCreatePayrollProfile, setBaseSalary,
+  createStaffTransaction, getStaffAccountSummary,
+  getAllStaffAccountSummaries, getMonthlyPayrollReport,
+  getAllStaffTransactionsForExport,
+} = require('../../core/payrollService');
 const {
   createInventoryItem, listInventoryItems, getInventoryItemById,
   findInventoryItemByName, createInventoryMovement,
@@ -1769,10 +1777,11 @@ async function handlePinVerify(ctx, text) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function handleExportMenuChoice(ctx, text) {
-  if (text === '📊 خروجی فروش‌ها')       return handleSalesCsvExport(ctx);
-  if (text === '💰 خروجی مخارج')          return handleExpensesCsvExport(ctx);
-  if (text === '🛒 خروجی خریدهای مواد')   return handlePurchasesCsvExport(ctx);
-  if (text === '📦 خروجی انبار')          return handleInventoryCsvExport(ctx);
+  if (text === '📊 خروجی فروش‌ها')         return handleSalesCsvExport(ctx);
+  if (text === '💰 خروجی مخارج')            return handleExpensesCsvExport(ctx);
+  if (text === '🛒 خروجی خریدهای مواد')     return handlePurchasesCsvExport(ctx);
+  if (text === '📦 خروجی انبار')            return handleInventoryCsvExport(ctx);
+  if (text === '📋 خروجی حقوق پرسنل')      return handleStaffTransactionsCsvExport(ctx);
   return ctx.reply(MSG.exportMenu, { parse_mode: 'Markdown', ...KB.exportMenuKeyboard() });
 }
 
@@ -2503,6 +2512,295 @@ async function handleInventoryCsvExport(ctx) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// حساب پرسنل (Phase 8D)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── منوی اصلی حساب پرسنل ────────────────────────────────────────────────────
+async function startPayrollMenu(ctx) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  const hasPerm = hasPermission(biz, 'payroll.view')   ||
+                  hasPermission(biz, 'payroll.manage') ||
+                  hasPermission(biz, 'payroll.pay')    ||
+                  hasPermission(biz, 'payroll.adjust') ||
+                  (Array.isArray(biz?.permissions) && biz.permissions.includes('*'));
+  if (!hasPerm) {
+    return ctx.reply(MSG.permissionDenied, getMenu(session));
+  }
+  session.step = 'payroll_menu';
+  session.data = {};
+  return ctx.reply(MSG.payrollMenu, { parse_mode: 'Markdown', ...KB.payrollMenuKeyboard() });
+}
+
+async function handlePayrollMenu(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+
+  // ─── لیست حساب پرسنل ──────────────────────────────────────────────────────
+  if (text === '📋 لیست حساب پرسنل') {
+    if (!hasPermission(biz, 'payroll.view')) {
+      return ctx.reply(MSG.permissionDenied, KB.payrollMenuKeyboard());
+    }
+    const summaries = await getAllStaffAccountSummaries(biz.businessId);
+    return ctx.reply(
+      MSG.allStaffAccountSummaries(summaries),
+      { parse_mode: 'Markdown', ...KB.payrollMenuKeyboard() }
+    );
+  }
+
+  // ─── تعیین حقوق پایه ──────────────────────────────────────────────────────
+  if (text === '💰 تعیین حقوق پایه') {
+    if (!hasPermission(biz, 'payroll.manage')) {
+      return ctx.reply(MSG.permissionDenied, KB.payrollMenuKeyboard());
+    }
+    const members = await getTeamMembers(biz.businessId);
+    const staff = members.filter(m => m.role !== 'business_owner' && m.role !== 'super_admin');
+    if (staff.length === 0) {
+      return ctx.reply(MSG.noStaffMembers, KB.payrollMenuKeyboard());
+    }
+    session.step = 'payroll_salary_select';
+    session.data = { staffList: staff };
+    return ctx.reply(MSG.selectStaffMember, KB.staffSelectKeyboard(staff));
+  }
+
+  // ─── ثبت پرداخت حقوق ──────────────────────────────────────────────────────
+  if (text === '💵 ثبت پرداخت حقوق') {
+    if (!hasPermission(biz, 'payroll.pay')) {
+      return ctx.reply(MSG.permissionDenied, KB.payrollMenuKeyboard());
+    }
+    return startStaffTransactionFlow(ctx, 'salary_payment');
+  }
+
+  // ─── ثبت برداشت / علی‌الحساب ──────────────────────────────────────────────
+  if (text === '🧾 ثبت برداشت / علی‌الحساب') {
+    if (!hasPermission(biz, 'payroll.pay')) {
+      return ctx.reply(MSG.permissionDenied, KB.payrollMenuKeyboard());
+    }
+    return startStaffTransactionFlow(ctx, 'advance');
+  }
+
+  // ─── ثبت مصرف داخلی ───────────────────────────────────────────────────────
+  if (text === '🍦 ثبت مصرف داخلی') {
+    if (!hasPermission(biz, 'payroll.pay')) {
+      return ctx.reply(MSG.permissionDenied, KB.payrollMenuKeyboard());
+    }
+    return startStaffTransactionFlow(ctx, 'internal_consumption');
+  }
+
+  // ─── ثبت پاداش ────────────────────────────────────────────────────────────
+  if (text === '🎁 ثبت پاداش') {
+    if (!hasPermission(biz, 'payroll.pay')) {
+      return ctx.reply(MSG.permissionDenied, KB.payrollMenuKeyboard());
+    }
+    return startStaffTransactionFlow(ctx, 'bonus');
+  }
+
+  // ─── ثبت کسری / جریمه ────────────────────────────────────────────────────
+  if (text === '➖ ثبت کسری / جریمه') {
+    if (!hasPermission(biz, 'payroll.adjust')) {
+      return ctx.reply(MSG.permissionDenied, KB.payrollMenuKeyboard());
+    }
+    return startStaffTransactionFlow(ctx, 'deduction');
+  }
+
+  // ─── گزارش حقوق ماه ───────────────────────────────────────────────────────
+  if (text === '📊 گزارش حقوق ماه') {
+    if (!hasPermission(biz, 'payroll.view')) {
+      return ctx.reply(MSG.permissionDenied, KB.payrollMenuKeyboard());
+    }
+    const report = await getMonthlyPayrollReport(biz.businessId);
+    // تاریخ‌ها را به شمسی تبدیل کن
+    report.startDate = gDate(report.startDate);
+    report.endDate   = gDate(report.endDate);
+    return ctx.reply(
+      MSG.monthlyPayrollReport(report),
+      { parse_mode: 'Markdown', ...KB.payrollMenuKeyboard() }
+    );
+  }
+
+  return ctx.reply(MSG.payrollMenu, { parse_mode: 'Markdown', ...KB.payrollMenuKeyboard() });
+}
+
+// ─── شروع جریان تراکنش پرسنلی ────────────────────────────────────────────────
+async function startStaffTransactionFlow(ctx, transactionType) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  const members = await getTeamMembers(biz.businessId);
+  const staff = members.filter(m => m.role !== 'business_owner' && m.role !== 'super_admin');
+  if (staff.length === 0) {
+    return ctx.reply(MSG.noStaffMembers, KB.payrollMenuKeyboard());
+  }
+  session.step = 'payroll_tx_select';
+  session.data = { staffList: staff, transactionType };
+  return ctx.reply(MSG.selectStaffMember, KB.staffSelectKeyboard(staff));
+}
+
+// ─── جریان تعیین حقوق پایه ───────────────────────────────────────────────────
+async function handleSetSalaryStep(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const { step, data } = session;
+  const biz = session.biz;
+
+  if (step === 'payroll_salary_select') {
+    const staff = data.staffList || [];
+    const idx   = parseMemberIndex(text);
+    if (idx < 0 || idx >= staff.length) {
+      return ctx.reply(MSG.selectStaffMember, KB.staffSelectKeyboard(staff));
+    }
+    const member = staff[idx];
+    data.selectedStaff = member;
+    session.step = 'payroll_salary_amount';
+    const displayName = member.display_name || member.name || `کاربر ${member.telegram_id}`;
+    return ctx.reply(
+      MSG.askBaseSalaryAmount(displayName),
+      { parse_mode: 'Markdown', ...KB.cancelKeyboard }
+    );
+  }
+
+  if (step === 'payroll_salary_amount') {
+    const n = parseNumber(text);
+    if (n === null || n < 0) return ctx.reply(MSG.invalidNumber, KB.cancelKeyboard);
+    data.salaryAmount = n;
+    session.step = 'payroll_salary_type';
+    return ctx.reply(MSG.askSalaryType, KB.salaryTypeKeyboard());
+  }
+
+  if (step === 'payroll_salary_type') {
+    const SALARY_TYPES = ['ماهانه', 'روزانه', 'ساعتی'];
+    const typeMap = { 'ماهانه': 'monthly', 'روزانه': 'daily', 'ساعتی': 'hourly' };
+    if (!SALARY_TYPES.includes(text)) {
+      return ctx.reply(MSG.askSalaryType, KB.salaryTypeKeyboard());
+    }
+    const salaryType = typeMap[text];
+    const member = data.selectedStaff;
+    const displayName = member.display_name || member.name || `کاربر ${member.telegram_id}`;
+
+    await setBaseSalary(biz.businessId, member.id, data.salaryAmount, salaryType);
+
+    session.step = 'payroll_menu';
+    session.data = {};
+    return ctx.reply(
+      MSG.salarySaved(displayName, data.salaryAmount, salaryType),
+      KB.payrollMenuKeyboard()
+    );
+  }
+}
+
+// ─── جریان ثبت تراکنش پرسنلی ─────────────────────────────────────────────────
+async function handleStaffTransactionStep(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const { step, data } = session;
+  const biz = session.biz;
+
+  if (step === 'payroll_tx_select') {
+    const staff = data.staffList || [];
+    const idx   = parseMemberIndex(text);
+    if (idx < 0 || idx >= staff.length) {
+      return ctx.reply(MSG.selectStaffMember, KB.staffSelectKeyboard(staff));
+    }
+    const member = staff[idx];
+    data.selectedStaff = member;
+    session.step = 'payroll_tx_amount';
+    const displayName = member.display_name || member.name || `کاربر ${member.telegram_id}`;
+    const typeName = TRANSACTION_TYPE_LABELS[data.transactionType] || data.transactionType;
+    return ctx.reply(
+      MSG.askTransactionAmount(typeName, displayName),
+      { parse_mode: 'Markdown', ...KB.cancelKeyboard }
+    );
+  }
+
+  if (step === 'payroll_tx_amount') {
+    const n = parseNumber(text);
+    if (n === null || n <= 0) return ctx.reply(MSG.invalidNumber, KB.cancelKeyboard);
+    data.txAmount = n;
+    session.step  = 'payroll_tx_note';
+    return ctx.reply(MSG.askTransactionNote, KB.cancelKeyboard);
+  }
+
+  if (step === 'payroll_tx_note') {
+    data.txNote  = text === 'ندارم' ? null : text.trim();
+    session.step = 'payroll_tx_confirm';
+    const member     = data.selectedStaff;
+    const displayName = member.display_name || member.name || `کاربر ${member.telegram_id}`;
+    const typeName   = TRANSACTION_TYPE_LABELS[data.transactionType] || data.transactionType;
+    return ctx.reply(
+      MSG.confirmTransaction({
+        staffName: displayName,
+        typeName,
+        amount:    data.txAmount,
+        date:      gDate(getTodayDate()),
+        note:      data.txNote,
+      }),
+      { parse_mode: 'Markdown', ...KB.confirmSaleKeyboard() }
+    );
+  }
+
+  if (step === 'payroll_tx_confirm') {
+    if (text !== '✅ تأیید و ذخیره') {
+      // ویرایش — بازگشت به انتخاب مبلغ
+      session.step = 'payroll_tx_amount';
+      const member      = data.selectedStaff;
+      const displayName = member.display_name || member.name || `کاربر ${member.telegram_id}`;
+      const typeName    = TRANSACTION_TYPE_LABELS[data.transactionType] || data.transactionType;
+      return ctx.reply(
+        MSG.askTransactionAmount(typeName, displayName),
+        { parse_mode: 'Markdown', ...KB.cancelKeyboard }
+      );
+    }
+    const member      = data.selectedStaff;
+    const displayName = member.display_name || member.name || `کاربر ${member.telegram_id}`;
+    const typeName    = TRANSACTION_TYPE_LABELS[data.transactionType] || data.transactionType;
+    const today       = getTodayDate();
+
+    await createStaffTransaction({
+      businessId:          biz.businessId,
+      businessUserId:      member.id,
+      transactionType:     data.transactionType,
+      amount:              data.txAmount,
+      note:                data.txNote,
+      createdByTelegramId: ctx.from.id,
+      transactionDate:     today,
+    });
+
+    session.step = 'payroll_menu';
+    session.data = {};
+    return ctx.reply(
+      MSG.transactionSaved({
+        staffName: displayName,
+        typeName,
+        amount: data.txAmount,
+        date:   gDate(today),
+        note:   data.txNote,
+      }),
+      KB.payrollMenuKeyboard()
+    );
+  }
+}
+
+// ─── خروجی CSV حقوق پرسنل ────────────────────────────────────────────────────
+async function handleStaffTransactionsCsvExport(ctx) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  if (!hasPermission(biz, 'payroll.view')) {
+    return ctx.reply(MSG.permissionDenied, KB.exportMenuKeyboard());
+  }
+  await ctx.reply(MSG.exportGenerating);
+  const rows = await getAllStaffTransactionsForExport(biz?.businessId);
+  if (rows.length === 0) return ctx.reply(MSG.exportEmptyStaffTransactions);
+  const csv = '﻿' + buildStaffTransactionsCsv(rows);
+  const tmpPath = path.join(os.tmpdir(), `icebox_payroll_${Date.now()}.csv`);
+  fs.writeFileSync(tmpPath, csv, 'utf8');
+  try {
+    await ctx.replyWithDocument(
+      { source: fs.createReadStream(tmpPath), filename: 'payroll_export.csv' },
+      { caption: `📋 خروجی حقوق پرسنل — ${rows.length} رکورد` }
+    );
+  } finally {
+    try { fs.unlinkSync(tmpPath); } catch (_) {}
+  }
+}
+
 // ─── خروجی CSV خریدها ─────────────────────────────────────────────────────────
 async function handlePurchasesCsvExport(ctx) {
   const session = getSession(ctx.from.id);
@@ -2584,6 +2882,7 @@ async function handleText(ctx) {
     if (text === '📤 خروجی اطلاعات')   return startExportMenu(ctx);
     if (text === '🏭 تأمین‌کننده‌ها')    return startSupplierMenu(ctx);
     if (text === '📦 انبار')             return startInventoryMenu(ctx);
+    if (text === '👥 حساب پرسنل')        return startPayrollMenu(ctx);
     if (text === '❓ راهنما') {
       return ctx.reply(MSG.help, { parse_mode: 'Markdown', ...getMenu(session) });
     }
@@ -2644,6 +2943,11 @@ async function handleText(ctx) {
   if (session.step && session.step.startsWith('inventory_add_'))    return handleInventoryAddStep(ctx, text);
   if (session.step && session.step.startsWith('inventory_consume_')) return handleInventoryConsumeStep(ctx, text);
   if (session.step && session.step.startsWith('inventory_adjust_')) return handleInventoryAdjustStep(ctx, text);
+
+  // ── حساب پرسنل (Phase 8D) ──────────────────────────────────────────────────
+  if (session.step === 'payroll_menu')                            return handlePayrollMenu(ctx, text);
+  if (session.step && session.step.startsWith('payroll_salary_')) return handleSetSalaryStep(ctx, text);
+  if (session.step && session.step.startsWith('payroll_tx_'))    return handleStaffTransactionStep(ctx, text);
 
   // ── تنظیمات و خروجی ────────────────────────────────────────────────────────
   if (session.step === 'settings_menu') return handleSettingsMenu(ctx, text);

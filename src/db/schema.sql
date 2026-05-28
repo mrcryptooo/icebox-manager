@@ -177,3 +177,29 @@ CREATE TABLE IF NOT EXISTS inventory_movements (
   created_at             TIMESTAMPTZ DEFAULT NOW(),
   FOREIGN KEY (item_id) REFERENCES inventory_items(id)
 );
+
+-- ─── پروفایل حقوقی پرسنل (Phase 8D) ─────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS payroll_profiles (
+  id                SERIAL PRIMARY KEY,
+  business_id       INTEGER NOT NULL,
+  business_user_id  INTEGER NOT NULL,
+  base_salary       NUMERIC DEFAULT 0,
+  salary_type       TEXT NOT NULL DEFAULT 'monthly',
+  status            TEXT NOT NULL DEFAULT 'active',
+  created_at        TIMESTAMPTZ DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(business_id, business_user_id)
+);
+
+-- ─── تراکنش‌های حساب پرسنل (Phase 8D) ────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS staff_transactions (
+  id                     SERIAL PRIMARY KEY,
+  business_id            INTEGER NOT NULL,
+  business_user_id       INTEGER NOT NULL,
+  transaction_type       TEXT NOT NULL,
+  amount                 NUMERIC NOT NULL,
+  transaction_date       TEXT NOT NULL,
+  note                   TEXT,
+  created_by_telegram_id BIGINT,
+  created_at             TIMESTAMPTZ DEFAULT NOW()
+);

@@ -228,6 +228,7 @@ Railway بعد از تنظیم Variables خودکار ربات را deploy می�
 | `expenses_export.csv` | id, branch_name, expense_date, amount, category, note, created_at |
 | `purchases_export.csv` | id, supplier_name, branch_name, purchase_date, item_name, quantity, unit, unit_price, total_amount, paid_amount, remaining_amount, note, created_at |
 | `inventory_export.csv` | item_name, stock, unit, min_stock, status |
+| `payroll_export.csv` | id, staff_name, role, transaction_type, amount, transaction_date, note, created_at |
 
 - رکوردهای حذف‌شده (soft delete) در خروجی نمی‌آیند
 - فایل CSV با BOM (UTF-8) ذخیره می‌شود — در Excel فارسی‌ها درست نمایش داده می‌شوند
@@ -251,13 +252,14 @@ src/
     reportService.js  ← تولید گزارش‌های ترکیبی
     branchService.js  ← مدیریت شعبه‌ها
     userService.js    ← مدیریت کاربران
-    exportService.js    ← خروجی CSV فروش‌ها، مخارج، خریدها و انبار
+    exportService.js    ← خروجی CSV فروش‌ها، مخارج، خریدها، انبار و حقوق پرسنل
     businessService.js  ← مدیریت کسب‌وکارها (Phase 7)
     licenseService.js   ← مدیریت لایسنس‌ها (Phase 7)
     teamService.js      ← مدیریت تیم و نقش‌ها (Phase 7)
     lockService.js      ← قفل بخش‌ها با PIN (Phase 7)
     supplierService.js  ← تأمین‌کنندگان، خریدها، پرداخت‌ها (Phase 8)
     inventoryService.js ← انبار مواد اولیه، حرکات موجودی (Phase 8C)
+    payrollService.js   ← حقوق پرسنل، تراکنش‌های مالی پرسنلی (Phase 8D)
   db/
     database.js       ← اتصال PostgreSQL (pg Pool) و initDatabase
     schema.sql        ← طرح جداول دیتابیس (PostgreSQL)
@@ -338,6 +340,10 @@ railway.json          ← تنظیمات Railway
 | مدیریت انبار | ❌ | ❌ | ❌ |
 | ثبت مصرف انبار | ✅ | ❌ | ❌ |
 | اصلاح موجودی انبار | ✅ | ❌ | ❌ |
+| مشاهده حقوق پرسنل | ❌ | ❌ | ✅ |
+| مدیریت حقوق پرسنل | ❌ | ❌ | ❌ |
+| ثبت پرداخت حقوق | ❌ | ❌ | ✅ |
+| اصلاح حساب پرسنل | ❌ | ❌ | ❌ |
 
 مالک کسب‌وکار و super_admin دسترسی کامل (`*`) دارند.
 
@@ -393,6 +399,50 @@ railway.json          ← تنظیمات Railway
 | `inventory.manage` | افزودن/ویرایش مواد اولیه | مالک |
 | `inventory.consume` | ثبت مصرف و خروج | مالک، سرپرست |
 | `inventory.adjust` | اصلاح دستی موجودی | مالک، سرپرست |
+
+---
+
+## حساب پرسنل (Phase 8D)
+
+### منوی 👥 حساب پرسنل
+
+| دکمه | عملکرد | دسترسی مورد نیاز |
+|------|---------|-----------------|
+| 📋 لیست حساب پرسنل | خلاصه حساب همه کارمندان فعال | `payroll.view` |
+| 💰 تعیین حقوق پایه | تنظیم حقوق پایه و نوع (ماهانه/روزانه/ساعتی) | `payroll.manage` |
+| 💵 ثبت پرداخت حقوق | ثبت پرداخت حقوق به کارمند | `payroll.pay` |
+| 🧾 ثبت برداشت / علی‌الحساب | ثبت برداشت یا پیش‌پرداخت | `payroll.pay` |
+| 🍦 ثبت مصرف داخلی | ثبت مصرف محصول توسط کارمند | `payroll.pay` |
+| 🎁 ثبت پاداش | ثبت پاداش برای کارمند | `payroll.pay` |
+| ➖ ثبت کسری / جریمه | ثبت کسر از حساب کارمند | `payroll.adjust` |
+| 📊 گزارش حقوق ماه | گزارش ماه جاری برای همه پرسنل | `payroll.view` |
+
+### فرمول محاسبه مانده پرسنل
+
+```
+مانده = حقوق_پایه + پاداش + اصلاح_مثبت
+      − پرداخت_حقوق − برداشت − مصرف_داخلی − کسری
+```
+
+### انواع تراکنش‌های پرسنلی
+
+| نوع | توضیح |
+|-----|-------|
+| `salary_payment` | پرداخت حقوق ماهانه/روزانه/ساعتی |
+| `advance` | برداشت / علی‌الحساب |
+| `internal_consumption` | مصرف محصول فروشگاه توسط کارمند |
+| `bonus` | پاداش (به مانده اضافه می‌شود) |
+| `deduction` | کسری / جریمه |
+| `adjustment` | اصلاح حساب (مثبت یا منفی) |
+
+### دسترسی‌های پرسنل (Phase 8D)
+
+| دسترسی | توضیح | پیش‌فرض |
+|--------|-------|---------|
+| `payroll.view` | مشاهده حقوق و گزارش | مالک، حسابدار |
+| `payroll.manage` | تعیین حقوق پایه | مالک |
+| `payroll.pay` | ثبت پرداخت، برداشت، مصرف، پاداش | مالک، حسابدار |
+| `payroll.adjust` | ثبت کسری/جریمه و اصلاح حساب | مالک |
 
 ---
 
@@ -469,7 +519,8 @@ total_paid       = paid_at_purchase + later_payments
 | Phase 8A | گزارش ریز مخارج، تأمین‌کنندگان، ثبت خرید مواد | ✅ |
 | Phase 8B | پرداخت به تأمین‌کننده، حساب بدهی، خروجی CSV خریدها | ✅ |
 | Phase 8C | انبار مواد اولیه، گردش موجودی، هشدار کمبود | ✅ |
-| Phase 9 | داشبورد کامل، حقوق پرسنل، Bale | 🔜 |
+| Phase 8D | حقوق پرسنل، برداشت، مصرف داخلی، پاداش، گزارش ماهانه | ✅ |
+| Phase 9 | داشبورد کامل، Bale | 🔜 |
 
 ---
 
