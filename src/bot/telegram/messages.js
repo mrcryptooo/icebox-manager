@@ -539,6 +539,47 @@ const MSG = {
     `در صورت بروز مشکل با مدیر سیستم تماس بگیرید.`,
 
   settings: `⚙️ *تنظیمات*\n\nاز گزینه‌های زیر انتخاب کنید:`,
+
+  // ─── مدیریت دسترسی‌ها (Phase 7D) ──────────────────────────────────────────
+  permissionUpdated:
+    '✅ دسترسی با موفقیت به‌روزرسانی شد.',
+
+  permissionsResetToDefault:
+    '✅ دسترسی‌های پیش‌فرض نقش دوباره اعمال شد.',
+
+  ownerPermissionDenied:
+    '🔒 دسترسی این کاربر کامل است و قابل محدودسازی نیست.',
+
+  managePermissions: (name, perms) => {
+    const PLBL = {
+      'sales.create':        'ثبت فروش',
+      'sales.view':          'مشاهده فروش',
+      'sales.edit':          'ویرایش فروش',
+      'sales.delete':        'حذف فروش',
+      'expenses.create':     'ثبت خرج',
+      'expenses.view':       'مشاهده خرج',
+      'expenses.edit':       'ویرایش خرج',
+      'expenses.delete':     'حذف خرج',
+      'reports.view':        'مشاهده گزارش‌ها',
+      'exports.create':      'خروجی اطلاعات',
+      'branches.manage':     'مدیریت شعبه‌ها',
+      'manage_records.view': 'مدیریت ثبت‌ها',
+      'settings.manage':     'تنظیمات',
+      'team.manage':         'مدیریت تیم',
+    };
+    const ALL = [
+      'sales.create', 'sales.view', 'sales.edit', 'sales.delete',
+      'expenses.create', 'expenses.view', 'expenses.edit', 'expenses.delete',
+      'reports.view', 'exports.create',
+      'branches.manage', 'manage_records.view', 'settings.manage', 'team.manage',
+    ];
+    const permsArr = Array.isArray(perms) ? perms : [];
+    const sep = '─'.repeat(24);
+    const lines = [`🔐 *مدیریت دسترسی‌های ${name}*\n${sep}`];
+    ALL.forEach(p => lines.push(`${permsArr.includes(p) ? '✅' : '❌'} ${PLBL[p] || p}`));
+    lines.push(`\n${sep}\nبرای تغییر هر دسترسی روی دکمه‌اش بزنید:`);
+    return lines.join('\n');
+  },
 };
 
 module.exports = MSG;

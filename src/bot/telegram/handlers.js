@@ -40,6 +40,9 @@ const {
   addTeamMember, getTeamMembers, getAllTeamMembers,
   updateMemberRole, deactivateMember, activateMember,
   getInactiveMembership,
+  getMemberPermissions, updateMemberPermissions,
+  toggleMemberPermission, resetMemberPermissionsToRoleDefault,
+  ALL_PERMISSIONS, PERMISSION_LABELS,
   DEFAULT_PERMISSIONS, ROLE_LABELS,
 } = require('../../core/teamService');
 const {
@@ -146,9 +149,9 @@ async function ensureBizContext(ctx) {
   return null;
 }
 
-// ─── منوی اصلی مناسب ─────────────────────────────────────────────────────────
+// ─── منوی اصلی مناسب (پویا براساس permission واقعی) ─────────────────────────
 function getMenu(session) {
-  return KB.getMainMenuForRole(session?.biz?.role);
+  return KB.getMainMenuDynamic(session?.biz);
 }
 
 // ─── بررسی قفل بخش ───────────────────────────────────────────────────────────
@@ -1236,10 +1239,22 @@ async function handleMemberAction(ctx, text) {
 
   if (text === '👁 دیدن دسترسی‌ها') {
     const perms = Array.isArray(selectedMember.permissions) ? selectedMember.permissions : [];
-    const roleLabel = ROLE_LABELS[selectedMember.role] || selectedMember.role;
     return ctx.reply(
       MSG.memberPermissionsList(displayName, perms),
       { parse_mode: 'Markdown', ...KB.memberActionKeyboard(isActive) }
+    );
+  }
+
+  if (text === '🔐 مدیریت دسترسی‌ها') {
+    if (selectedMember.role === 'business_owner' || selectedMember.role === 'super_admin') {
+      return ctx.reply(MSG.ownerPermissionDenied, KB.memberActionKeyboard(isActive));
+    }
+    const freshPerms = await getMemberPermissions(biz.businessId, selectedMember.user_id);
+    session.data.selectedMember.permissions = freshPerms;
+    session.step = 'team_member_permissions';
+    return ctx.reply(
+      MSG.managePermissions(displayName, freshPerms),
+      { parse_mode: 'Markdown', ...KB.permissionsKeyboard(freshPerms) }
     );
   }
 
@@ -1252,6 +1267,63 @@ async function handleMemberAction(ctx, text) {
   return ctx.reply(
     MSG.memberAction(displayName, roleLabel, isActive),
     { parse_mode: 'Markdown', ...KB.memberActionKeyboard(isActive) }
+  );
+}
+
+// ─── مدیریت دسترسی‌های یک عضو (Phase 7D) ─────────────────────────────────────
+async function handlePermissionsMenu(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const biz     = session.biz;
+  const { selectedMember } = session.data;
+
+  if (!selectedMember) return startMemberList(ctx);
+
+  const displayName = selectedMember.display_name || selectedMember.name || '—';
+  const isActive    = selectedMember.is_active === 1 || selectedMember.is_active === true;
+
+  // ── بازگشت به منوی عضو ──────────────────────────────────────────────────────
+  if (text === '🔙 بازگشت') {
+    session.step = 'team_member_action';
+    const roleLabel = ROLE_LABELS[selectedMember.role] || selectedMember.role;
+    return ctx.reply(
+      MSG.memberAction(displayName, roleLabel, isActive),
+      { parse_mode: 'Markdown', ...KB.memberActionKeyboard(isActive) }
+    );
+  }
+
+  // ── بازگردانی به دسترسی‌های پیش‌فرض نقش ─────────────────────────────────────
+  if (text === '🔄 بازگردانی پیش‌فرض نقش') {
+    const newPerms = await resetMemberPermissionsToRoleDefault(biz.businessId, selectedMember.user_id);
+    session.data.selectedMember.permissions = newPerms || [];
+    await ctx.reply(MSG.permissionsResetToDefault);
+    return ctx.reply(
+      MSG.managePermissions(displayName, newPerms || []),
+      { parse_mode: 'Markdown', ...KB.permissionsKeyboard(newPerms || []) }
+    );
+  }
+
+  // ── toggle یک permission ──────────────────────────────────────────────────────
+  // دکمه‌ها به شکل "✅ ثبت فروش" یا "❌ ثبت فروش" هستند
+  const stripped = (text.startsWith('✅ ') || text.startsWith('❌ ')) ? text.slice(2) : null;
+  if (stripped) {
+    const permKey = ALL_PERMISSIONS.find(p => PERMISSION_LABELS[p] === stripped);
+    if (permKey) {
+      const newPerms = await toggleMemberPermission(biz.businessId, selectedMember.user_id, permKey);
+      session.data.selectedMember.permissions = newPerms;
+      await ctx.reply(MSG.permissionUpdated);
+      return ctx.reply(
+        MSG.managePermissions(displayName, newPerms),
+        { parse_mode: 'Markdown', ...KB.permissionsKeyboard(newPerms) }
+      );
+    }
+  }
+
+  // ── fallback — نمایش مجدد صفحه دسترسی‌ها ──────────────────────────────────
+  const currentPerms = await getMemberPermissions(biz.businessId, selectedMember.user_id);
+  session.data.selectedMember.permissions = currentPerms;
+  return ctx.reply(
+    MSG.managePermissions(displayName, currentPerms),
+    { parse_mode: 'Markdown', ...KB.permissionsKeyboard(currentPerms) }
   );
 }
 
@@ -1766,9 +1838,10 @@ async function handleText(ctx) {
   if (session.step === 'lock_menu')     return handleLockMenu(ctx, text);
 
   // ── مدیریت تیم ─────────────────────────────────────────────────────────────
-  if (session.step === 'team_menu')          return handleTeamMenu(ctx, text);
-  if (session.step === 'team_member_select') return handleMemberSelect(ctx, text);
-  if (session.step === 'team_member_action') return handleMemberAction(ctx, text);
+  if (session.step === 'team_menu')              return handleTeamMenu(ctx, text);
+  if (session.step === 'team_member_select')     return handleMemberSelect(ctx, text);
+  if (session.step === 'team_member_action')     return handleMemberAction(ctx, text);
+  if (session.step === 'team_member_permissions') return handlePermissionsMenu(ctx, text);
   if (session.step && session.step.startsWith('team_')) return handleTeamStep(ctx, text);
 
   // ── مدیریت لایسنس ──────────────────────────────────────────────────────────

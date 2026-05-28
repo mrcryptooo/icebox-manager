@@ -44,6 +44,52 @@ const accountantMenu = Markup.keyboard([
 const mainMenu = businessOwnerMenu;
 
 /**
+ * منوی اصلی پویا براساس permissionهای واقعی کاربر (Phase 7D)
+ * اگر biz نداشت، منوی پیش‌فرض برمی‌گردد.
+ */
+function getMainMenuDynamic(biz) {
+  if (!biz) return mainMenu;
+  const perms  = Array.isArray(biz.permissions) ? biz.permissions : [];
+  const hasAll = perms.includes('*');
+  const role   = biz.role;
+  const has    = (p) => hasAll || perms.includes(p);
+
+  const rows = [];
+
+  // ردیف ۱: ثبت فروش + ثبت خرج
+  const r1 = [];
+  if (has('sales.create'))    r1.push('💰 ثبت فروش امروز');
+  if (has('expenses.create')) r1.push('🧾 ثبت خرج');
+  if (r1.length) rows.push(r1);
+
+  // ردیف ۲: گزارش‌ها + خروجی اطلاعات
+  const r2 = [];
+  if (has('reports.view'))   r2.push('📊 گزارش‌ها');
+  if (has('exports.create')) r2.push('📤 خروجی اطلاعات');
+  if (r2.length) rows.push(r2);
+
+  // ردیف ۳: مدیریت ثبت‌ها
+  if (has('manage_records.view')) rows.push(['🗂️ مدیریت ثبت‌ها']);
+
+  // ردیف ۴: مدیریت شعبه‌ها + مدیریت تیم
+  const r4 = [];
+  if (has('branches.manage')) r4.push('🏪 مدیریت شعبه‌ها');
+  if (has('team.manage'))     r4.push('👥 مدیریت تیم');
+  if (r4.length) rows.push(r4);
+
+  // ردیف ۵: مجوزها (super_admin) + تنظیمات
+  const r5 = [];
+  if (role === 'super_admin')                r5.push('🔑 مجوزها');
+  if (hasAll || has('settings.manage'))      r5.push('⚙️ تنظیمات');
+  if (r5.length) rows.push(r5);
+
+  // ردیف آخر: راهنما
+  rows.push(['❓ راهنما']);
+
+  return Markup.keyboard(rows).resize();
+}
+
+/**
  * برگرداندن منوی اصلی متناسب با نقش کاربر
  */
 function getMainMenuForRole(role) {
@@ -247,12 +293,36 @@ function memberSelectKeyboard(members) {
 // ─── عملیات روی عضو انتخاب‌شده ───────────────────────────────────────────────
 function memberActionKeyboard(isActive) {
   return Markup.keyboard([
-    ['🔄 تغییر نقش'],
+    ['🔄 تغییر نقش', '🔐 مدیریت دسترسی‌ها'],
     [isActive ? '🚫 غیرفعال کردن عضو' : '✅ فعال کردن عضو'],
     ['👁 دیدن دسترسی‌ها'],
     ['🔙 بازگشت به لیست'],
     ['🏠 منوی اصلی'],
   ]).resize();
+}
+
+// ─── مدیریت دسترسی‌های یک عضو (Phase 7D) ────────────────────────────────────
+function permissionsKeyboard(perms) {
+  const permsArr = Array.isArray(perms) ? perms : [];
+  const ALL = [
+    'sales.create',       'sales.view',         'sales.edit',      'sales.delete',
+    'expenses.create',    'expenses.view',       'expenses.edit',   'expenses.delete',
+    'reports.view',       'exports.create',
+    'branches.manage',    'manage_records.view', 'settings.manage', 'team.manage',
+  ];
+  const LBL = {
+    'sales.create': 'ثبت فروش', 'sales.view': 'مشاهده فروش',
+    'sales.edit': 'ویرایش فروش', 'sales.delete': 'حذف فروش',
+    'expenses.create': 'ثبت خرج', 'expenses.view': 'مشاهده خرج',
+    'expenses.edit': 'ویرایش خرج', 'expenses.delete': 'حذف خرج',
+    'reports.view': 'مشاهده گزارش‌ها', 'exports.create': 'خروجی اطلاعات',
+    'branches.manage': 'مدیریت شعبه‌ها', 'manage_records.view': 'مدیریت ثبت‌ها',
+    'settings.manage': 'تنظیمات', 'team.manage': 'مدیریت تیم',
+  };
+  const rows = ALL.map(p => [`${permsArr.includes(p) ? '✅' : '❌'} ${LBL[p]}`]);
+  rows.push(['🔄 بازگردانی پیش‌فرض نقش']);
+  rows.push(['🔙 بازگشت', '🏠 منوی اصلی']);
+  return Markup.keyboard(rows).resize();
 }
 
 // ─── انتخاب نقش ──────────────────────────────────────────────────────────────
@@ -322,6 +392,7 @@ module.exports = {
   staffMenu,
   accountantMenu,
   getMainMenuForRole,
+  getMainMenuDynamic,
   cancelKeyboard,
   branchKeyboard,
   noBranchesActionKeyboard,
@@ -343,6 +414,7 @@ module.exports = {
   teamMenuKeyboard,
   memberSelectKeyboard,
   memberActionKeyboard,
+  permissionsKeyboard,
   roleSelectKeyboard,
   businessTypeKeyboard,
   licenseMenuKeyboard,

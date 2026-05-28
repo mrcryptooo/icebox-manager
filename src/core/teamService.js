@@ -18,6 +18,32 @@ const DEFAULT_PERMISSIONS = {
   ],
 };
 
+// ─── همه permissionهای قابل مدیریت ───────────────────────────────────────────
+const ALL_PERMISSIONS = [
+  'sales.create',       'sales.view',         'sales.edit',      'sales.delete',
+  'expenses.create',    'expenses.view',       'expenses.edit',   'expenses.delete',
+  'reports.view',       'exports.create',
+  'branches.manage',    'manage_records.view', 'settings.manage', 'team.manage',
+];
+
+// ─── نام فارسی permissionها ────────────────────────────────────────────────────
+const PERMISSION_LABELS = {
+  'sales.create':        'ثبت فروش',
+  'sales.view':          'مشاهده فروش',
+  'sales.edit':          'ویرایش فروش',
+  'sales.delete':        'حذف فروش',
+  'expenses.create':     'ثبت خرج',
+  'expenses.view':       'مشاهده خرج',
+  'expenses.edit':       'ویرایش خرج',
+  'expenses.delete':     'حذف خرج',
+  'reports.view':        'مشاهده گزارش‌ها',
+  'exports.create':      'خروجی اطلاعات',
+  'branches.manage':     'مدیریت شعبه‌ها',
+  'manage_records.view': 'مدیریت ثبت‌ها',
+  'settings.manage':     'تنظیمات',
+  'team.manage':         'مدیریت تیم',
+};
+
 // ─── نام فارسی نقش‌ها ─────────────────────────────────────────────────────────
 const ROLE_LABELS = {
   super_admin:    'سوپرادمین',
@@ -123,6 +149,50 @@ async function getInactiveMembership(telegramId) {
   return result.rows[0] || null;
 }
 
+// ─── خواندن دسترسی‌های فعلی یک عضو ───────────────────────────────────────────
+async function getMemberPermissions(businessId, userId) {
+  const result = await query(
+    'SELECT permissions FROM business_users WHERE business_id = $1 AND user_id = $2',
+    [businessId, userId]
+  );
+  if (!result.rows[0]) return [];
+  const perms = result.rows[0].permissions;
+  return Array.isArray(perms) ? perms : [];
+}
+
+// ─── ذخیره دسترسی‌های جدید برای یک عضو ───────────────────────────────────────
+async function updateMemberPermissions(businessId, userId, perms) {
+  const result = await query(`
+    UPDATE business_users SET permissions = $1::jsonb
+    WHERE business_id = $2 AND user_id = $3
+    RETURNING *
+  `, [JSON.stringify(perms), businessId, userId]);
+  return result.rows[0] || null;
+}
+
+// ─── روشن/خاموش کردن یک permission ──────────────────────────────────────────
+async function toggleMemberPermission(businessId, userId, permKey) {
+  const perms = await getMemberPermissions(businessId, userId);
+  const newPerms = perms.includes(permKey)
+    ? perms.filter(p => p !== permKey)
+    : [...perms, permKey];
+  await updateMemberPermissions(businessId, userId, newPerms);
+  return newPerms;
+}
+
+// ─── بازگردانی دسترسی‌ها به حالت پیش‌فرض نقش ────────────────────────────────
+async function resetMemberPermissionsToRoleDefault(businessId, userId) {
+  const result = await query(
+    'SELECT role FROM business_users WHERE business_id = $1 AND user_id = $2',
+    [businessId, userId]
+  );
+  if (!result.rows[0]) return null;
+  const role  = result.rows[0].role;
+  const perms = DEFAULT_PERMISSIONS[role] || DEFAULT_PERMISSIONS.staff;
+  await updateMemberPermissions(businessId, userId, perms);
+  return perms;
+}
+
 // ─── بارگذاری biz context با آیدی تلگرام ─────────────────────────────────────
 async function getBizContextByTelegramId(telegramId) {
   const result = await query(`
@@ -155,7 +225,13 @@ module.exports = {
   deactivateMember,
   activateMember,
   getInactiveMembership,
+  getMemberPermissions,
+  updateMemberPermissions,
+  toggleMemberPermission,
+  resetMemberPermissionsToRoleDefault,
   getBizContextByTelegramId,
   DEFAULT_PERMISSIONS,
+  ALL_PERMISSIONS,
+  PERMISSION_LABELS,
   ROLE_LABELS,
 };
