@@ -706,35 +706,48 @@ const MSG = {
   paymentSaved: (d) =>
     `✅ پرداخت با موفقیت ثبت شد.\n\n` +
     `🏭 ${d.supplierName}\n` +
-    `📅 ${d.date} | 💵 ${d.amount} تومان | 💳 ${d.method}`,
+    `📅 ${d.date} | 💵 ${d.amount} تومان | 💳 ${d.method}\n\n` +
+    `${'─'.repeat(24)}\n` +
+    `${d.isSettled ? '✅ حساب تأمین‌کننده تسویه شد' : `🔴 مانده جدید بدهی: ${d.newDebt} تومان`}`,
 
   // ─── حساب تأمین‌کنندگان ──────────────────────────────────────────────────
   supplierAccount: (s) => {
-    const sep = '─'.repeat(26);
+    // formatter داخلی — بدون نیاز به import خارجی
+    const pd = '۰۱۲۳۴۵۶۷۸۹'.split('');
+    const fmt = n => Math.round(Number(n) || 0).toLocaleString('en-US').replace(/\d/g, d => pd[d]);
+    const sep  = '─'.repeat(26);
+    const debt = Number(s.debt) || 0;
     return `💳 *حساب ${s.name}*\n${sep}\n` +
-      `🛒 جمع خریدها: ${s.totalPurchases} تومان\n` +
-      `💵 پرداخت هنگام خرید: ${s.paidAtPurchase} تومان\n` +
-      `🏦 پرداخت‌های جداگانه: ${s.totalPayments} تومان\n` +
+      `🛒 جمع خریدها: ${fmt(s.totalPurchases)} تومان\n` +
+      `💵 پرداخت هنگام خرید: ${fmt(s.paidAtPurchase)} تومان\n` +
+      `🏦 پرداخت‌های جداگانه: ${fmt(s.totalPayments)} تومان\n` +
       `${sep}\n` +
-      `${Number(s.debt) > 0 ? `🔴 بدهی فعلی: ${s.debt} تومان` : `✅ حساب تسویه است`}`;
+      `${debt > 0 ? `🔴 بدهی فعلی: ${fmt(debt)} تومان` : `✅ حساب تسویه است`}`;
   },
 
   allSupplierAccounts: (suppliers) => {
     if (suppliers.length === 0) return '⚠️ هیچ تأمین‌کننده‌ای ثبت نشده است.';
+    // formatter داخلی — مستقل از formatMoney (که در handlers اعمال می‌شود)
+    const pd = '۰۱۲۳۴۵۶۷۸۹'.split('');
+    const fmt = n => Math.round(Number(n) || 0).toLocaleString('en-US').replace(/\d/g, d => pd[d]);
     const sep = '─'.repeat(26);
     const lines = [`💳 *خلاصه حساب تأمین‌کنندگان*\n${sep}`];
     let totalDebt = 0;
     suppliers.forEach((s, i) => {
-      const debt = Number(s.debt);
+      const debt      = Number(s.debt)           || 0;
+      const purchase  = Number(s.totalPurchases) || 0;
+      const atBuy     = Number(s.paidAtPurchase) || 0;
+      const later     = Number(s.totalPayments)  || 0;
+      const totalPaid = atBuy + later;
       totalDebt += debt;
       lines.push(
         `\n${i + 1}. *${s.name}*\n` +
-        `   🛒 خریدها: ${s.totalPurchases} تومان\n` +
-        `   💵 پرداخت‌شده: ${Number(s.paidAtPurchase) + Number(s.totalPayments)} تومان\n` +
-        `   ${debt > 0 ? `🔴 بدهی: ${debt} تومان` : '✅ تسویه'}`
+        `   🛒 خریدها: ${fmt(purchase)} تومان\n` +
+        `   💵 پرداخت‌شده: ${fmt(totalPaid)} تومان\n` +
+        `   ${debt > 0 ? `🔴 بدهی: ${fmt(debt)} تومان` : '✅ تسویه'}`
       );
     });
-    lines.push(`\n${sep}\n🔴 *جمع کل بدهی‌ها: ${totalDebt} تومان*`);
+    lines.push(`\n${sep}\n🔴 *جمع کل بدهی‌ها: ${fmt(totalDebt)} تومان*`);
     return lines.join('\n');
   },
 

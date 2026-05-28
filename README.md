@@ -360,11 +360,20 @@ railway.json          ← تنظیمات Railway
 | 🛒 ثبت خرید مواد | ثبت خرید از یک تأمین‌کننده | `purchases.create` |
 | 💵 ثبت پرداخت به تأمین‌کننده | ثبت پرداخت بدهی | `supplier_payments.create` |
 
-### فرمول بدهی
+### فرمول محاسبه مانده بدهی تأمین‌کننده
 
 ```
-بدهی = جمع total_amount خریدها − جمع paid_amount خریدها − جمع پرداخت‌های جداگانه
+total_purchases  = SUM(total_amount  از supplier_purchases  که deleted_at IS NULL)
+paid_at_purchase = SUM(paid_amount   از supplier_purchases  که deleted_at IS NULL)
+later_payments   = SUM(amount        از supplier_payments)
+total_paid       = paid_at_purchase + later_payments
+مانده بدهی       = total_purchases  - total_paid
 ```
+
+مثال:
+- خرید خامه: total=۳,۰۰۰,۰۰۰ — پرداخت هنگام خرید: ۱,۵۰۰,۰۰۰
+- پرداخت بعدی: ۵۰۰,۰۰۰
+- مانده = ۳,۰۰۰,۰۰۰ − ۱,۵۰۰,۰۰۰ − ۵۰۰,۰۰۰ = **۱,۰۰۰,۰۰۰**
 
 ### دسترسی‌های جدید (Phase 8)
 

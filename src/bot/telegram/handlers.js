@@ -1851,15 +1851,10 @@ async function handleSupplierMenu(ctx, text) {
       return ctx.reply(MSG.permissionDenied, KB.supplierMenuKeyboard());
     }
     const suppliers = await getAllSupplierBalances(biz.businessId);
-    const formatted = suppliers.map(s => ({
-      ...s,
-      totalPurchases: formatMoney(s.totalPurchases),
-      paidAtPurchase: formatMoney(s.paidAtPurchase),
-      totalPayments:  formatMoney(s.totalPayments),
-      debt:           formatMoney(s.debt),
-    }));
+    // اعداد خام (بدون formatMoney) پاس می‌شوند تا messages.js بتواند
+    // روی آن‌ها عملیات Number() انجام دهد
     return ctx.reply(
-      MSG.allSupplierAccounts(formatted),
+      MSG.allSupplierAccounts(suppliers),
       { parse_mode: 'Markdown', ...KB.supplierMenuKeyboard() }
     );
   }
@@ -2123,11 +2118,15 @@ async function handleSuppPaymentStep(ctx, text) {
         note:                data.note,
         createdByTelegramId: ctx.from.id,
       });
+      // مانده جدید را بعد از ثبت پرداخت واکشی کن
+      const newBalance = await getSupplierBalance(biz.businessId, data.supplierId);
       const summary = {
         supplierName: data.supplierName,
         date:         gDate(data.paymentDate),
         amount:       formatMoney(data.amount),
         method:       data.method,
+        newDebt:      formatMoney(newBalance.debt),
+        isSettled:    newBalance.debt <= 0,
       };
       clearSession(ctx.from.id);
       return ctx.reply(MSG.paymentSaved(summary), getMenu(getSession(ctx.from.id)));
