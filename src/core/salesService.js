@@ -1,19 +1,21 @@
+'use strict';
 const { query } = require('../db/database');
 
 // ─── ثبت فروش جدید ───────────────────────────────────────────────────────────
-async function recordSale({ branchId, userId, saleDate, cashAmount, posAmount, cardTransferAmount, onlineAmount, orderCount, note }) {
+async function recordSale({
+  businessId, branchId, userId, saleDate,
+  cashAmount, posAmount, cardTransferAmount, onlineAmount, orderCount, note,
+}) {
   const result = await query(`
-    INSERT INTO sales (branch_id, user_id, sale_date, cash_amount, pos_amount, card_transfer_amount, online_amount, order_count, note)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    INSERT INTO sales
+      (business_id, branch_id, user_id, sale_date,
+       cash_amount, pos_amount, card_transfer_amount, online_amount, order_count, note)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
     RETURNING id
   `, [
-    branchId, userId, saleDate,
-    cashAmount || 0,
-    posAmount || 0,
-    cardTransferAmount || 0,
-    onlineAmount || 0,
-    orderCount || 0,
-    note || null,
+    businessId || null, branchId, userId, saleDate,
+    cashAmount || 0, posAmount || 0, cardTransferAmount || 0, onlineAmount || 0,
+    orderCount || 0, note || null,
   ]);
   return getSaleById(result.rows[0].id);
 }
@@ -35,11 +37,28 @@ async function getSalesByBranchAndDate(branchId, date) {
   return result.rows;
 }
 
-async function getSalesByDateRange(branchId, startDate, endDate) {
+async function getSalesByDateRange(branchId, startDate, endDate, businessId) {
+  if (branchId && businessId) {
+    const result = await query(
+      `SELECT * FROM sales
+       WHERE branch_id = $1 AND sale_date BETWEEN $2 AND $3
+         AND deleted_at IS NULL AND business_id = $4
+       ORDER BY sale_date`,
+      [branchId, startDate, endDate, businessId]
+    );
+    return result.rows;
+  }
   if (branchId) {
     const result = await query(
       'SELECT * FROM sales WHERE branch_id = $1 AND sale_date BETWEEN $2 AND $3 AND deleted_at IS NULL ORDER BY sale_date',
       [branchId, startDate, endDate]
+    );
+    return result.rows;
+  }
+  if (businessId) {
+    const result = await query(
+      'SELECT * FROM sales WHERE sale_date BETWEEN $1 AND $2 AND deleted_at IS NULL AND business_id = $3 ORDER BY sale_date',
+      [startDate, endDate, businessId]
     );
     return result.rows;
   }
@@ -51,14 +70,21 @@ async function getSalesByDateRange(branchId, startDate, endDate) {
 }
 
 // آخرین N فروش (با نام شعبه)
-async function getRecentSales(limit = 10) {
+async function getRecentSales(limit = 10, businessId) {
+  if (businessId) {
+    const result = await query(`
+      SELECT s.*, b.name AS branch_name
+      FROM sales s LEFT JOIN branches b ON s.branch_id = b.id
+      WHERE s.deleted_at IS NULL AND s.business_id = $1
+      ORDER BY s.created_at DESC LIMIT $2
+    `, [businessId, limit]);
+    return result.rows;
+  }
   const result = await query(`
     SELECT s.*, b.name AS branch_name
-    FROM sales s
-    LEFT JOIN branches b ON s.branch_id = b.id
+    FROM sales s LEFT JOIN branches b ON s.branch_id = b.id
     WHERE s.deleted_at IS NULL
-    ORDER BY s.created_at DESC
-    LIMIT $1
+    ORDER BY s.created_at DESC LIMIT $1
   `, [limit]);
   return result.rows;
 }
@@ -71,13 +97,8 @@ async function updateSale(id, { cashAmount, posAmount, cardTransferAmount, onlin
         online_amount = $4, order_count = $5, note = $6
     WHERE id = $7 AND deleted_at IS NULL
   `, [
-    cashAmount || 0,
-    posAmount || 0,
-    cardTransferAmount || 0,
-    onlineAmount || 0,
-    orderCount || 0,
-    note || null,
-    id,
+    cashAmount || 0, posAmount || 0, cardTransferAmount || 0,
+    onlineAmount || 0, orderCount || 0, note || null, id,
   ]);
   return getSaleById(id);
 }
@@ -91,15 +112,15 @@ async function deleteSale(id) {
   return result.rowCount > 0;
 }
 
-// ─── جمع‌بندی (pure — بدون نیاز به async) ────────────────────────────────────
+// ─── جمع‌بندی (pure) ─────────────────────────────────────────────────────────
 function aggregateSales(rows) {
   return rows.reduce(
     (acc, row) => {
-      acc.cash        += row.cash_amount          || 0;
-      acc.pos         += row.pos_amount           || 0;
+      acc.cash         += row.cash_amount          || 0;
+      acc.pos          += row.pos_amount           || 0;
       acc.cardTransfer += row.card_transfer_amount || 0;
-      acc.online      += row.online_amount        || 0;
-      acc.orderCount  += row.order_count          || 0;
+      acc.online       += row.online_amount        || 0;
+      acc.orderCount   += row.order_count          || 0;
       return acc;
     },
     { cash: 0, pos: 0, cardTransfer: 0, online: 0, orderCount: 0 }

@@ -1,7 +1,13 @@
+'use strict';
 const { query } = require('../db/database');
 
 // ─── دریافت همه فروش‌ها برای خروجی CSV ──────────────────────────────────────
-async function getAllSalesForExport() {
+async function getAllSalesForExport(businessId) {
+  const whereClause = businessId
+    ? 'WHERE s.deleted_at IS NULL AND s.business_id = $1'
+    : 'WHERE s.deleted_at IS NULL';
+  const params = businessId ? [businessId] : [];
+
   const result = await query(`
     SELECT
       s.id,
@@ -17,14 +23,19 @@ async function getAllSalesForExport() {
       s.created_at
     FROM sales s
     LEFT JOIN branches b ON s.branch_id = b.id
-    WHERE s.deleted_at IS NULL
+    ${whereClause}
     ORDER BY s.sale_date DESC, s.id DESC
-  `);
+  `, params);
   return result.rows;
 }
 
 // ─── دریافت همه مخارج برای خروجی CSV ────────────────────────────────────────
-async function getAllExpensesForExport() {
+async function getAllExpensesForExport(businessId) {
+  const whereClause = businessId
+    ? 'WHERE e.deleted_at IS NULL AND e.business_id = $1'
+    : 'WHERE e.deleted_at IS NULL';
+  const params = businessId ? [businessId] : [];
+
   const result = await query(`
     SELECT
       e.id,
@@ -36,14 +47,13 @@ async function getAllExpensesForExport() {
       e.created_at
     FROM expenses e
     LEFT JOIN branches b ON e.branch_id = b.id
-    WHERE e.deleted_at IS NULL
+    ${whereClause}
     ORDER BY e.expense_date DESC, e.id DESC
-  `);
+  `, params);
   return result.rows;
 }
 
 // ─── ساخت CSV ─────────────────────────────────────────────────────────────────
-// مقادیر حاوی کاما، کوتیشن یا خط‌جدید را escape می‌کند
 function escapeCell(val) {
   if (val === null || val === undefined) return '';
   const str = String(val);
@@ -63,17 +73,10 @@ function buildSalesCsv(rows) {
   const lines = [header];
   for (const r of rows) {
     lines.push([
-      r.id,
-      escapeCell(r.branch_name),
-      r.report_date,
-      r.cash_amount     || 0,
-      r.card_amount     || 0,
-      r.transfer_amount || 0,
-      r.online_amount   || 0,
-      r.total_amount    || 0,
-      r.order_count     || 0,
-      escapeCell(r.note),
-      fmtTime(r.created_at),
+      r.id, escapeCell(r.branch_name), r.report_date,
+      r.cash_amount || 0, r.card_amount || 0, r.transfer_amount || 0, r.online_amount || 0,
+      r.total_amount || 0, r.order_count || 0,
+      escapeCell(r.note), fmtTime(r.created_at),
     ].join(','));
   }
   return lines.join('\r\n');
@@ -84,12 +87,8 @@ function buildExpensesCsv(rows) {
   const lines = [header];
   for (const r of rows) {
     lines.push([
-      r.id,
-      escapeCell(r.branch_name),
-      r.expense_date,
-      r.amount || 0,
-      escapeCell(r.category),
-      escapeCell(r.note),
+      r.id, escapeCell(r.branch_name), r.expense_date,
+      r.amount || 0, escapeCell(r.category), escapeCell(r.note),
       fmtTime(r.created_at),
     ].join(','));
   }

@@ -1,3 +1,4 @@
+'use strict';
 const { getSalesByDateRange, aggregateSales } = require('./salesService');
 const { getExpensesByDateRange, aggregateExpenses, getTopExpenseCategoryForRange } = require('./expenseService');
 const { getAllBranches, getBranchById } = require('./branchService');
@@ -43,22 +44,22 @@ function buildReportText(label, branchName, sales, expensesTotal, topCategory) {
 }
 
 // ─── گزارش یک شعبه ───────────────────────────────────────────────────────────
-async function getSingleBranchReport(branchId, label, startDate, endDate) {
+async function getSingleBranchReport(branchId, label, startDate, endDate, businessId) {
   const branch      = await getBranchById(branchId);
-  const salesRows   = await getSalesByDateRange(branchId, startDate, endDate);
-  const expenseRows = await getExpensesByDateRange(branchId, startDate, endDate);
+  const salesRows   = await getSalesByDateRange(branchId, startDate, endDate, businessId);
+  const expenseRows = await getExpensesByDateRange(branchId, startDate, endDate, businessId);
   if (salesRows.length === 0 && expenseRows.length === 0) {
-    return `📊 ${label}\n🏪 شعبه: ${branch.name}\n\n⚠️ در این بازه گزارشی ثبت نشده است.`;
+    return `📊 ${label}\n🏪 شعبه: ${branch ? branch.name : '—'}\n\n⚠️ در این بازه گزارشی ثبت نشده است.`;
   }
-  const sales      = aggregateSales(salesRows);
-  const expenses   = aggregateExpenses(expenseRows);
-  const topCategory = await getTopExpenseCategoryForRange(branchId, startDate, endDate);
-  return buildReportText(label, branch.name, sales, expenses, topCategory);
+  const sales       = aggregateSales(salesRows);
+  const expenses    = aggregateExpenses(expenseRows);
+  const topCategory = await getTopExpenseCategoryForRange(branchId, startDate, endDate, businessId);
+  return buildReportText(label, branch ? branch.name : '—', sales, expenses, topCategory);
 }
 
 // ─── گزارش همه شعبه‌ها ───────────────────────────────────────────────────────
-async function buildAllBranchesReport(label, startDate, endDate) {
-  const branches = await getAllBranches();
+async function buildAllBranchesReport(label, startDate, endDate, businessId) {
+  const branches = await getAllBranches(businessId);
   if (branches.length === 0) return 'هیچ شعبه‌ای ثبت نشده است.';
 
   const sep = '━'.repeat(28);
@@ -68,11 +69,11 @@ async function buildAllBranchesReport(label, startDate, endDate) {
   let hasData = false;
 
   for (const branch of branches) {
-    const salesRows   = await getSalesByDateRange(branch.id, startDate, endDate);
-    const expenseRows = await getExpensesByDateRange(branch.id, startDate, endDate);
+    const salesRows   = await getSalesByDateRange(branch.id, startDate, endDate, businessId);
+    const expenseRows = await getExpensesByDateRange(branch.id, startDate, endDate, businessId);
     const sales    = aggregateSales(salesRows);
     const expenses = aggregateExpenses(expenseRows);
-    const total = sales.cash + sales.pos + sales.cardTransfer + sales.online;
+    const total    = sales.cash + sales.pos + sales.cardTransfer + sales.online;
     grandTotal    += total;
     grandExpenses += expenses;
     if (salesRows.length > 0 || expenseRows.length > 0) hasData = true;
@@ -96,19 +97,18 @@ async function buildAllBranchesReport(label, startDate, endDate) {
     `📦 جمع کل مخارج: ${formatMoney(grandExpenses)} تومان\n` +
     `💰 مانده کل: ${formatMoney(grandTotal - grandExpenses)} تومان`
   );
-
   return lines.join('\n');
 }
 
 // ─── گزارش مقایسه شعبه‌ها ────────────────────────────────────────────────────
-async function buildComparisonText(label, startDate, endDate) {
-  const branches = await getAllBranches();
+async function buildComparisonText(label, startDate, endDate, businessId) {
+  const branches = await getAllBranches(businessId);
   if (branches.length === 0) return 'هیچ شعبه‌ای ثبت نشده است.';
   if (branches.length < 2)  return 'برای مقایسه شعبه‌ها باید حداقل دو شعبه ثبت شده باشد.';
 
   const stats = await Promise.all(branches.map(async branch => {
-    const salesRows   = await getSalesByDateRange(branch.id, startDate, endDate);
-    const expenseRows = await getExpensesByDateRange(branch.id, startDate, endDate);
+    const salesRows   = await getSalesByDateRange(branch.id, startDate, endDate, businessId);
+    const expenseRows = await getExpensesByDateRange(branch.id, startDate, endDate, businessId);
     const sales    = aggregateSales(salesRows);
     const expenses = aggregateExpenses(expenseRows);
     const total    = sales.cash + sales.pos + sales.cardTransfer + sales.online;
@@ -116,12 +116,12 @@ async function buildComparisonText(label, startDate, endDate) {
     return { name: branch.name, total, expenses, net: total - expenses, orderCount: sales.orderCount, avgOrder };
   }));
 
-  const sorted         = [...stats].sort((a, b) => b.total - a.total);
-  const best           = sorted[0];
-  const leastExpenses  = [...stats].sort((a, b) => a.expenses - b.expenses)[0];
-  const bestNet        = [...stats].sort((a, b) => b.net - a.net)[0];
-  const grandTotal     = stats.reduce((s, b) => s + b.total,    0);
-  const grandExpenses  = stats.reduce((s, b) => s + b.expenses, 0);
+  const sorted        = [...stats].sort((a, b) => b.total - a.total);
+  const best          = sorted[0];
+  const leastExpenses = [...stats].sort((a, b) => a.expenses - b.expenses)[0];
+  const bestNet       = [...stats].sort((a, b) => b.net - a.net)[0];
+  const grandTotal    = stats.reduce((s, b) => s + b.total,    0);
+  const grandExpenses = stats.reduce((s, b) => s + b.expenses, 0);
 
   const sepC = '━'.repeat(28);
   const lines = [`${sepC}\n📊 ${label} — مقایسه شعبه‌ها\n${sepC}`];
@@ -148,91 +148,82 @@ async function buildComparisonText(label, startDate, endDate) {
     `📦 جمع مخارج: ${formatMoney(grandExpenses)} تومان\n` +
     `💰 مانده کل: ${formatMoney(grandTotal - grandExpenses)} تومان`
   );
-
   return lines.join('\n');
 }
 
 // ─── گزارش روزانه ─────────────────────────────────────────────────────────────
-async function getDailyReport(branchId) {
+async function getDailyReport(branchId, businessId) {
   const today = getTodayDate();
-  return getSingleBranchReport(branchId, `گزارش امروز — ${getTodayJalali()}`, today, today);
+  return getSingleBranchReport(branchId, `گزارش امروز — ${getTodayJalali()}`, today, today, businessId);
 }
 
-async function getDailyAllBranches() {
+async function getDailyAllBranches(businessId) {
   const today = getTodayDate();
-  return buildAllBranchesReport(`گزارش امروز — ${getTodayJalali()}`, today, today);
+  return buildAllBranchesReport(`گزارش امروز — ${getTodayJalali()}`, today, today, businessId);
 }
 
-async function getDailyComparison() {
+async function getDailyComparison(businessId) {
   const today = getTodayDate();
-  return buildComparisonText(`گزارش امروز — ${getTodayJalali()}`, today, today);
+  return buildComparisonText(`گزارش امروز — ${getTodayJalali()}`, today, today, businessId);
 }
 
 // ─── گزارش هفتگی ─────────────────────────────────────────────────────────────
-async function getWeeklyReport(branchId) {
+async function getWeeklyReport(branchId, businessId) {
   const { start, end } = getWeekRange();
   const label = `گزارش هفتگی (${gregorianToJalaliDateString(start)} تا ${gregorianToJalaliDateString(end)})`;
-  return getSingleBranchReport(branchId, label, start, end);
+  return getSingleBranchReport(branchId, label, start, end, businessId);
 }
 
-async function getWeeklyAllBranches() {
+async function getWeeklyAllBranches(businessId) {
   const { start, end } = getWeekRange();
   const label = `گزارش هفتگی (${gregorianToJalaliDateString(start)} تا ${gregorianToJalaliDateString(end)})`;
-  return buildAllBranchesReport(label, start, end);
+  return buildAllBranchesReport(label, start, end, businessId);
 }
 
-async function getWeeklyComparison() {
+async function getWeeklyComparison(businessId) {
   const { start, end } = getWeekRange();
   const label = `گزارش هفتگی (${gregorianToJalaliDateString(start)} تا ${gregorianToJalaliDateString(end)})`;
-  return buildComparisonText(label, start, end);
+  return buildComparisonText(label, start, end, businessId);
 }
 
 // ─── گزارش ماهانه ────────────────────────────────────────────────────────────
-async function getMonthlyReport(branchId) {
+async function getMonthlyReport(branchId, businessId) {
   const { start, end } = getMonthRange();
   const label = `گزارش ماهانه (${gregorianToJalaliDateString(start)} تا ${gregorianToJalaliDateString(end)})`;
-  return getSingleBranchReport(branchId, label, start, end);
+  return getSingleBranchReport(branchId, label, start, end, businessId);
 }
 
-async function getMonthlyAllBranches() {
+async function getMonthlyAllBranches(businessId) {
   const { start, end } = getMonthRange();
   const label = `گزارش ماهانه (${gregorianToJalaliDateString(start)} تا ${gregorianToJalaliDateString(end)})`;
-  return buildAllBranchesReport(label, start, end);
+  return buildAllBranchesReport(label, start, end, businessId);
 }
 
-async function getMonthlyComparison() {
+async function getMonthlyComparison(businessId) {
   const { start, end } = getMonthRange();
   const label = `گزارش ماهانه (${gregorianToJalaliDateString(start)} تا ${gregorianToJalaliDateString(end)})`;
-  return buildComparisonText(label, start, end);
+  return buildComparisonText(label, start, end, businessId);
 }
 
 // ─── گزارش بازه دلخواه ───────────────────────────────────────────────────────
-async function getCustomReport(branchId, startDate, endDate) {
+async function getCustomReport(branchId, startDate, endDate, businessId) {
   const label = `بازه ${gregorianToJalaliDateString(startDate)} تا ${gregorianToJalaliDateString(endDate)}`;
-  return getSingleBranchReport(branchId, label, startDate, endDate);
+  return getSingleBranchReport(branchId, label, startDate, endDate, businessId);
 }
 
-async function getCustomAllBranches(startDate, endDate) {
+async function getCustomAllBranches(startDate, endDate, businessId) {
   const label = `بازه ${gregorianToJalaliDateString(startDate)} تا ${gregorianToJalaliDateString(endDate)}`;
-  return buildAllBranchesReport(label, startDate, endDate);
+  return buildAllBranchesReport(label, startDate, endDate, businessId);
 }
 
-async function getCustomComparison(startDate, endDate) {
+async function getCustomComparison(startDate, endDate, businessId) {
   const label = `بازه ${gregorianToJalaliDateString(startDate)} تا ${gregorianToJalaliDateString(endDate)}`;
-  return buildComparisonText(label, startDate, endDate);
+  return buildComparisonText(label, startDate, endDate, businessId);
 }
 
 module.exports = {
-  getDailyReport,
-  getWeeklyReport,
-  getMonthlyReport,
-  getDailyAllBranches,
-  getWeeklyAllBranches,
-  getMonthlyAllBranches,
-  getDailyComparison,
-  getWeeklyComparison,
-  getMonthlyComparison,
-  getCustomReport,
-  getCustomAllBranches,
-  getCustomComparison,
+  getDailyReport,    getWeeklyReport,    getMonthlyReport,
+  getDailyAllBranches, getWeeklyAllBranches, getMonthlyAllBranches,
+  getDailyComparison,  getWeeklyComparison,  getMonthlyComparison,
+  getCustomReport, getCustomAllBranches, getCustomComparison,
 };

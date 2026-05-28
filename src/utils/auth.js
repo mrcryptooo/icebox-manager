@@ -1,22 +1,47 @@
-/**
- * Access Control Helpers
- *
- * isOwner(ctx)      — آیا فرستنده مالک ربات است؟
- * isAuthorized(ctx) — آیا فرستنده اجازه استفاده دارد؟
- *
- * فعلاً فقط OWNER_ID مجاز است.
- * در آینده برای اضافه کردن مدیر شعبه، isAuthorized را توسعه دهید.
- */
+'use strict';
+const { getBizContextByTelegramId, DEFAULT_PERMISSIONS } = require('../core/teamService');
 
+const OWNER_ID = process.env.OWNER_ID ? Number(process.env.OWNER_ID) : null;
+
+// ─── آیا کاربر سوپرادمین است؟ ────────────────────────────────────────────────
+function isSuperAdmin(ctx) {
+  if (!OWNER_ID) return false;
+  return ctx.from?.id === OWNER_ID;
+}
+
+// ─── بارگذاری biz context از دیتابیس ────────────────────────────────────────
+async function loadBizContext(telegramId) {
+  return getBizContextByTelegramId(telegramId);
+}
+
+// ─── بررسی دسترسی ────────────────────────────────────────────────────────────
+function hasPermission(biz, permission) {
+  if (!biz) return false;
+  const perms = Array.isArray(biz.permissions) ? biz.permissions : [];
+  return perms.includes('*') || perms.includes(permission);
+}
+
+// ─── سازگاری با Phase 6 (برای index.js) ─────────────────────────────────────
 function isOwner(ctx) {
-  const ownerId = process.env.OWNER_ID ? Number(process.env.OWNER_ID) : null;
-  if (ownerId === null) return false;
-  return ctx.from?.id === ownerId;
+  return isSuperAdmin(ctx);
 }
 
-// فعلاً فقط OWNER مجاز است؛ بعداً می‌توان نقش‌های بیشتری اینجا اضافه کرد
 function isAuthorized(ctx) {
-  return isOwner(ctx);
+  return isSuperAdmin(ctx);
 }
 
-module.exports = { isOwner, isAuthorized };
+// ─── دریافت biz از session ───────────────────────────────────────────────────
+function getCurrentBusiness(session) {
+  return session?.biz || null;
+}
+
+module.exports = {
+  isSuperAdmin,
+  isOwner,
+  loadBizContext,
+  hasPermission,
+  isAuthorized,
+  getCurrentBusiness,
+  DEFAULT_PERMISSIONS,
+  OWNER_ID,
+};

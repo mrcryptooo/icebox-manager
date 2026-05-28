@@ -2,7 +2,6 @@ require('dotenv').config();
 const { Telegraf } = require('telegraf');
 const { handleStart, handleText, handleId, handleHealth, handleExportCommand } = require('./handlers');
 const { initDatabase } = require('../../db/database');
-const { isAuthorized } = require('../../utils/auth');
 const MSG = require('./messages');
 
 // ─── پیام‌های روزانه ──────────────────────────────────────────────────────────
@@ -80,15 +79,9 @@ async function main() {
   // ─── /id — برای همه کاربران (قبل از middleware احراز هویت) ─────────────────
   bot.command('id', handleId);
 
-  // ─── middleware احراز هویت — همه پیام‌های بعدی بررسی می‌شوند ─────────────────
-  bot.use(async (ctx, next) => {
-    if (!isAuthorized(ctx)) {
-      return ctx.reply(MSG.unauthorized);
-    }
-    return next();
-  });
-
-  // ─── دستورات مجاز (فقط OWNER) ────────────────────────────────────────────────
+  // ─── دستورات اصلی ────────────────────────────────────────────────────────────
+  // کنترل دسترسی per-operation در handlers.js انجام می‌شود.
+  // کاربران جدید باید بتوانند /start بزنند و وارد flow فعال‌سازی لایسنس شوند.
   bot.start(handleStart);
   bot.command('menu',   handleStart);
   bot.command('health', handleHealth);

@@ -1,71 +1,54 @@
+'use strict';
 const path = require('path');
 const os   = require('os');
 const fs   = require('fs');
 
-const MSG = require('./messages');
-const KB = require('./keyboards');
-const { isOwner } = require('../../utils/auth');
-const { checkConnection } = require('../../db/database');
-const { findOrCreateUser } = require('../../core/userService');
+const { getSession, clearSession }                    = require('../../utils/session');
+const { isSuperAdmin, hasPermission, loadBizContext } = require('../../utils/auth');
+const { checkConnection }                              = require('../../db/database');
+const { formatMoney, formatNumber }                    = require('../../utils/formatMoney');
+const {
+  getTodayDate, getWeekRange, getMonthRange,
+  gregorianToJalaliDateString, getTodayJalali,
+  getTodayJalaliParts, getJalaliMonthDays,
+  jalaliToGregorianDateString, normalizeDateInput,
+} = require('../../utils/date');
+
+const { findOrCreateUser, getUserByTelegramId }       = require('../../core/userService');
 const { getAllBranches, getBranchById, createBranch } = require('../../core/branchService');
 const {
-  recordSale, getSaleById, getRecentSales, updateSale, deleteSale,
+  recordSale, getSaleById, getRecentSales,
+  updateSale, deleteSale, aggregateSales,
 } = require('../../core/salesService');
 const {
-  recordExpense, getExpenseById, getRecentExpenses, updateExpense, deleteExpense,
+  recordExpense, getExpenseById, getRecentExpenses,
+  updateExpense, deleteExpense,
 } = require('../../core/expenseService');
 const {
-  getDailyReport, getWeeklyReport, getMonthlyReport,
-  getDailyAllBranches, getWeeklyAllBranches, getMonthlyAllBranches,
-  getDailyComparison, getWeeklyComparison, getMonthlyComparison,
-  getCustomReport, getCustomAllBranches, getCustomComparison,
+  getDailyReport,       getWeeklyReport,       getMonthlyReport,
+  getDailyAllBranches,  getWeeklyAllBranches,  getMonthlyAllBranches,
+  getDailyComparison,   getWeeklyComparison,   getMonthlyComparison,
+  getCustomReport,      getCustomAllBranches,  getCustomComparison,
 } = require('../../core/reportService');
 const {
   getAllSalesForExport, getAllExpensesForExport,
   buildSalesCsv, buildExpensesCsv,
 } = require('../../core/exportService');
+const { createBusiness, getDefaultBusiness, ensureDefaultBusiness } = require('../../core/businessService');
+const { createLicense, getLicenseByCode, getAllLicenses, activateLicense } = require('../../core/licenseService');
 const {
-  getTodayDate,
-  isValidDate,
-  isValidJalaliDate,
-  jalaliToGregorianDateString,
-  gregorianToJalaliDateString,
-  normalizeDateInput,
-  getJalaliMonthDays,
-  getTodayJalaliParts,
-} = require('../../utils/date');
-const { formatMoney, formatNumber } = require('../../utils/formatMoney');
+  addTeamMember, getTeamMembers, updateMemberRole, deactivateMember,
+  DEFAULT_PERMISSIONS, ROLE_LABELS,
+} = require('../../core/teamService');
+const {
+  setSectionLock, getSectionLock, removeSectionLock, getSectionLocks,
+  verifyPin, LOCKABLE_SECTIONS, SECTION_LABELS,
+} = require('../../core/lockService');
 
-// ─── Session store ────────────────────────────────────────────────────────────
-const sessions = {};
+const MSG = require('./messages');
+const KB  = require('./keyboards');
 
-function getSession(userId) {
-  if (!sessions[userId]) sessions[userId] = { step: null, data: {} };
-  return sessions[userId];
-}
-
-function clearSession(userId) {
-  sessions[userId] = { step: null, data: {} };
-}
-
-// ─── تبدیل عدد — فارسی/عربی/انگلیسی همه قبول می‌شوند ───────────────────────
-function parseNumber(text) {
-  const normalized = text
-    .replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 0x06F0))
-    .replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 0x0660))
-    .replace(/[,،٬\s]/g, '')
-    .trim();
-  const n = Number(normalized);
-  return isNaN(n) ? null : n;
-}
-
-function parseId(text) {
-  const n = parseNumber(text);
-  if (n === null || n <= 0 || !Number.isInteger(n)) return null;
-  return n;
-}
-
-// ─── نام ماه‌های شمسی (برای تقویم دکمه‌ای) ───────────────────────────────────
+// ─── ثابت‌ها ──────────────────────────────────────────────────────────────────
 const JALALI_MONTHS = [
   'فروردین', 'اردیبهشت', 'خرداد',
   'تیر', 'مرداد', 'شهریور',
@@ -73,9 +56,38 @@ const JALALI_MONTHS = [
   'دی', 'بهمن', 'اسفند',
 ];
 
-// تبدیل تاریخ میلادی ذخیره‌شده در دیتابیس به شمسی برای نمایش
-function gDate(gregorianStr) {
-  return gregorianToJalaliDateString(gregorianStr || '');
+const EXPENSE_VALID_CATEGORIES = [
+  'مواد اولیه', 'شیر و خامه', 'میوه', 'شکلات و تاپینگ',
+  'بسته‌بندی', 'حقوق و دستمزد', 'اجاره', 'قبوض',
+  'تعمیرات', 'تبلیغات', 'پیک و ارسال', 'سایر',
+];
+
+const ROLE_MAP = { 'مدیر': 'manager', 'کارمند': 'staff', 'حسابدار': 'accountant' };
+
+// ─── ابزارها ──────────────────────────────────────────────────────────────────
+function parseNumber(text) {
+  if (!text) return null;
+  const cleaned = text
+    .replace(/[,،\s]/g, '')
+    .replace(/[۰-۹]/g, d => String.fromCharCode(d.charCodeAt(0) - 1728));
+  const n = parseFloat(cleaned);
+  if (isNaN(n)) return null;
+  return n;
+}
+
+function parseId(text) {
+  if (!text) return null;
+  const cleaned = text
+    .trim()
+    .replace(/[۰-۹]/g, d => String.fromCharCode(d.charCodeAt(0) - 1728));
+  const n = parseInt(cleaned, 10);
+  if (isNaN(n) || n <= 0) return null;
+  return n;
+}
+
+function gDate(dateStr) {
+  if (!dateStr) return '—';
+  return gregorianToJalaliDateString(dateStr);
 }
 
 // ─── فرمت فروش برای نمایش ────────────────────────────────────────────────────
@@ -83,28 +95,112 @@ function formatSaleData(sale, branch) {
   const total = (sale.cash_amount || 0) + (sale.pos_amount || 0) +
                 (sale.card_transfer_amount || 0) + (sale.online_amount || 0);
   return {
-    id: sale.id,
-    branchName: branch ? branch.name : '—',
-    date: gDate(sale.sale_date),
-    cash: formatMoney(sale.cash_amount),
-    pos: formatMoney(sale.pos_amount),
+    id:          sale.id,
+    branchName:  branch ? branch.name : '—',
+    date:        gDate(sale.sale_date),
+    cash:        formatMoney(sale.cash_amount),
+    pos:         formatMoney(sale.pos_amount),
     cardTransfer: formatMoney(sale.card_transfer_amount),
-    online: formatMoney(sale.online_amount),
-    total: formatMoney(total),
-    orderCount: formatNumber(sale.order_count),
-    note: sale.note,
+    online:      formatMoney(sale.online_amount),
+    total:       formatMoney(total),
+    orderCount:  formatNumber(sale.order_count),
+    note:        sale.note,
   };
 }
 
-// ─── /start و /menu ───────────────────────────────────────────────────────────
+// ─── بارگذاری یا ایجاد biz context ──────────────────────────────────────────
+async function ensureBizContext(ctx) {
+  const session = getSession(ctx.from.id);
+  if (session.biz) return session.biz;
+
+  if (isSuperAdmin(ctx)) {
+    // ایجاد یا یافتن کسب‌وکار پیش‌فرض و ربط دادن OWNER به آن
+    const user = await getUserByTelegramId(ctx.from.id);
+    const defaultBizId = await ensureDefaultBusiness();
+    if (user) {
+      await addTeamMember({ businessId: defaultBizId, userId: user.id, role: 'business_owner' });
+    }
+    const biz = await getDefaultBusiness();
+    session.biz = {
+      businessId:   defaultBizId,
+      businessName: biz ? biz.name : 'فروشگاه پیش‌فرض',
+      role:         'super_admin',
+      permissions:  ['*'],
+    };
+    return session.biz;
+  }
+
+  const biz = await loadBizContext(ctx.from.id);
+  if (biz) {
+    session.biz = biz;
+    return biz;
+  }
+  return null;
+}
+
+// ─── منوی اصلی مناسب ─────────────────────────────────────────────────────────
+function getMenu(session) {
+  return KB.getMainMenuForRole(session?.biz?.role);
+}
+
+// ─── بررسی قفل بخش ───────────────────────────────────────────────────────────
+async function checkSectionPin(ctx, sectionKey, onSuccess) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  if (!biz) return ctx.reply(MSG.mainMenu, getMenu(session));
+
+  const lock = await getSectionLock(biz.businessId, sectionKey);
+  if (!lock) return onSuccess();
+
+  if (session.pinUnlocked && session.pinUnlocked[sectionKey]) return onSuccess();
+
+  session.data = session.data || {};
+  session.data.pendingSection = sectionKey;
+  session.data.pinAttempts    = 0;
+  session.step = 'pin_verify';
+  return ctx.reply(MSG.pinPrompt, KB.cancelKeyboard);
+}
+
+// ─── رفتن به بخش بعد از تأیید PIN ────────────────────────────────────────────
+async function navigateToSection(ctx, sectionKey) {
+  if (sectionKey === 'reports')        return startReportsMenu(ctx);
+  if (sectionKey === 'exports')        return startExportMenu(ctx);
+  if (sectionKey === 'manage_records') return startManageRecords(ctx);
+  if (sectionKey === 'settings')       return startSettings(ctx);
+  if (sectionKey === 'expenses')       return startExpenseFlow(ctx);
+  clearSession(ctx.from.id);
+  return ctx.reply(MSG.mainMenu, getMenu(getSession(ctx.from.id)));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// /start و /menu
+// ═══════════════════════════════════════════════════════════════════════════════
+
 async function handleStart(ctx) {
   const tgUser = ctx.from;
   const user = await findOrCreateUser(tgUser.id, tgUser.first_name || tgUser.username);
-  clearSession(tgUser.id);
-  await ctx.reply(MSG.welcome(user.name || tgUser.first_name), { parse_mode: 'Markdown', ...KB.mainMenu });
+
+  // بازنشانی کامل session (PIN هم پاک می‌شود)
+  const session = getSession(tgUser.id);
+  session.step        = null;
+  session.data        = {};
+  session.pinUnlocked = {};
+  // biz را پاک می‌کنیم تا تازه بارگذاری شود
+  session.biz = null;
+
+  const biz = await ensureBizContext(ctx);
+  if (!biz) {
+    session.step = 'register_license';
+    return ctx.reply(MSG.licensePrompt, KB.cancelKeyboard);
+  }
+
+  return ctx.reply(
+    MSG.welcome(user.name || tgUser.first_name),
+    { parse_mode: 'Markdown', ...getMenu(session) }
+  );
 }
 
-// ─── افزودن سریع شعبه (از کیبورد «بدون شعبه») ───────────────────────────────
+// ─── افزودن سریع شعبه ────────────────────────────────────────────────────────
 async function startQuickAddBranch(ctx) {
   const session = getSession(ctx.from.id);
   session.step = 'branch_add_name';
@@ -113,51 +209,132 @@ async function startQuickAddBranch(ctx) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// جریان ثبت‌نام کسب‌وکار جدید
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function handleRegistrationStep(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const { step, data } = session;
+
+  if (step === 'register_license') {
+    const code = text.trim().toUpperCase();
+    if (!/^ICE-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
+      return ctx.reply(MSG.licenseInvalid, KB.cancelKeyboard);
+    }
+    const license = await getLicenseByCode(code);
+    if (!license || license.used_by !== null) {
+      return ctx.reply(MSG.licenseUsedOrInvalid, KB.cancelKeyboard);
+    }
+    data.licenseCode = code;
+    session.step = 'register_biz_name';
+    return ctx.reply(MSG.askBusinessName, KB.cancelKeyboard);
+  }
+
+  if (step === 'register_biz_name') {
+    if (!text || text.trim().length < 2) {
+      return ctx.reply(MSG.askBusinessName, KB.cancelKeyboard);
+    }
+    data.bizName = text.trim();
+    session.step = 'register_biz_type';
+    return ctx.reply(MSG.askBusinessType, KB.businessTypeKeyboard());
+  }
+
+  if (step === 'register_biz_type') {
+    data.bizType = text.trim();
+    session.step = 'register_biz_city';
+    return ctx.reply(MSG.askBusinessCity, KB.cancelKeyboard);
+  }
+
+  if (step === 'register_biz_city') {
+    data.bizCity = text === 'ندارم' ? null : text.trim();
+    session.step = 'register_biz_phone';
+    return ctx.reply(MSG.askBusinessPhone, KB.cancelKeyboard);
+  }
+
+  if (step === 'register_biz_phone') {
+    data.bizPhone = text === 'ندارم' ? null : text.trim();
+
+    const tgUser = ctx.from;
+    const user = await findOrCreateUser(tgUser.id, tgUser.first_name || tgUser.username);
+
+    const biz = await createBusiness({
+      name:        data.bizName,
+      type:        data.bizType,
+      city:        data.bizCity,
+      phone:       data.bizPhone,
+      ownerId:     user.id,
+      licenseCode: data.licenseCode,
+    });
+
+    await activateLicense(data.licenseCode, biz.id);
+    await addTeamMember({ businessId: biz.id, userId: user.id, role: 'business_owner' });
+
+    session.biz = {
+      businessId:   biz.id,
+      businessName: biz.name,
+      role:         'business_owner',
+      permissions:  ['*'],
+    };
+    session.step = null;
+    session.data = {};
+
+    return ctx.reply(
+      MSG.businessRegistered(biz.name),
+      { parse_mode: 'Markdown', ...KB.getMainMenuForRole('business_owner') }
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // جریان ثبت فروش
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function startSaleFlow(ctx) {
-  const branches = await getAllBranches();
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  if (!hasPermission(biz, 'sales.create')) {
+    return ctx.reply(MSG.permissionDenied, getMenu(session));
+  }
+  const branches = await getAllBranches(biz?.businessId);
   if (branches.length === 0) {
     return ctx.reply(MSG.noBranchesAction, KB.noBranchesActionKeyboard());
   }
-  const session = getSession(ctx.from.id);
   session.step = 'sale_branch';
   session.data = {};
   return ctx.reply(MSG.selectBranch, KB.branchKeyboard(branches));
 }
 
 async function handleSaleBranch(ctx, branchName) {
-  const branches = await getAllBranches();
+  const session = getSession(ctx.from.id);
+  const branches = await getAllBranches(session.biz?.businessId);
   const branch = branches.find(b => b.name === branchName);
   if (!branch) return ctx.reply(MSG.selectBranch, KB.branchKeyboard(branches));
-  const session = getSession(ctx.from.id);
-  session.data.branchId = branch.id;
+  session.data.branchId   = branch.id;
   session.data.branchName = branch.name;
   session.step = 'sale_cash';
   return ctx.reply(MSG.askCash, KB.cancelKeyboard);
 }
 
 const SALE_NUMERIC_STEPS = [
-  { key: 'sale_cash',   nextAsk: () => MSG.askPos,          nextStep: 'sale_pos',    field: 'cash' },
-  { key: 'sale_pos',    nextAsk: () => MSG.askCardTransfer,  nextStep: 'sale_card',   field: 'pos' },
-  { key: 'sale_card',   nextAsk: () => MSG.askOnline,        nextStep: 'sale_online', field: 'cardTransfer' },
-  { key: 'sale_online', nextAsk: () => MSG.askOrderCount,    nextStep: 'sale_orders', field: 'online' },
-  { key: 'sale_orders', nextAsk: () => MSG.askNote,          nextStep: 'sale_note',   field: 'orderCount' },
+  { key: 'sale_cash',   nextAsk: () => MSG.askPos,         nextStep: 'sale_pos',    field: 'cash' },
+  { key: 'sale_pos',    nextAsk: () => MSG.askCardTransfer, nextStep: 'sale_card',   field: 'pos' },
+  { key: 'sale_card',   nextAsk: () => MSG.askOnline,       nextStep: 'sale_online', field: 'cardTransfer' },
+  { key: 'sale_online', nextAsk: () => MSG.askOrderCount,   nextStep: 'sale_orders', field: 'online' },
+  { key: 'sale_orders', nextAsk: () => MSG.askNote,         nextStep: 'sale_note',   field: 'orderCount' },
 ];
 
 function buildSaleConfirmData(data) {
   const total = (data.cash || 0) + (data.pos || 0) + (data.cardTransfer || 0) + (data.online || 0);
   return {
-    branchName: data.branchName,
-    date: gDate(data.saleDate || getTodayDate()),
-    cash: formatMoney(data.cash),
-    pos: formatMoney(data.pos),
+    branchName:  data.branchName,
+    date:        gDate(data.saleDate || getTodayDate()),
+    cash:        formatMoney(data.cash),
+    pos:         formatMoney(data.pos),
     cardTransfer: formatMoney(data.cardTransfer),
-    online: formatMoney(data.online),
-    total: formatMoney(total),
-    orderCount: formatNumber(data.orderCount),
-    note: data.note,
+    online:      formatMoney(data.online),
+    total:       formatMoney(total),
+    orderCount:  formatNumber(data.orderCount),
+    note:        data.note,
   };
 }
 
@@ -175,9 +352,9 @@ async function handleSaleStep(ctx, text) {
   }
 
   if (step === 'sale_note') {
-    data.note = text === 'ندارم' ? null : text;
+    data.note     = text === 'ندارم' ? null : text;
     data.saleDate = data.saleDate || getTodayDate();
-    session.step = 'sale_confirm';
+    session.step  = 'sale_confirm';
     return ctx.reply(MSG.confirmSale(buildSaleConfirmData(data)), KB.confirmSaleKeyboard());
   }
 
@@ -185,14 +362,20 @@ async function handleSaleStep(ctx, text) {
     if (text === '✅ تأیید و ذخیره') {
       const user = await findOrCreateUser(ctx.from.id, ctx.from.first_name);
       await recordSale({
-        branchId: data.branchId, userId: user.id, saleDate: data.saleDate,
-        cashAmount: data.cash, posAmount: data.pos,
-        cardTransferAmount: data.cardTransfer, onlineAmount: data.online,
-        orderCount: data.orderCount, note: data.note,
+        businessId:          session.biz?.businessId,
+        branchId:            data.branchId,
+        userId:              user.id,
+        saleDate:            data.saleDate,
+        cashAmount:          data.cash,
+        posAmount:           data.pos,
+        cardTransferAmount:  data.cardTransfer,
+        onlineAmount:        data.online,
+        orderCount:          data.orderCount,
+        note:                data.note,
       });
       const summary = buildSaleConfirmData(data);
       clearSession(ctx.from.id);
-      return ctx.reply(MSG.saleSavedWithSummary(summary), KB.mainMenu);
+      return ctx.reply(MSG.saleSavedWithSummary(summary), getMenu(getSession(ctx.from.id)));
     }
     if (text === '✏️ ویرایش') {
       session.data = { branchId: data.branchId, branchName: data.branchName, saleDate: data.saleDate };
@@ -200,7 +383,7 @@ async function handleSaleStep(ctx, text) {
       return ctx.reply(MSG.editStarted + '\n\n' + MSG.askCash, KB.cancelKeyboard);
     }
     clearSession(ctx.from.id);
-    return ctx.reply(MSG.cancelled, KB.mainMenu);
+    return ctx.reply(MSG.cancelled, getMenu(getSession(ctx.from.id)));
   }
 }
 
@@ -209,32 +392,32 @@ async function handleSaleStep(ctx, text) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function startExpenseFlow(ctx) {
-  const branches = await getAllBranches();
-  if (branches.length === 0) {
-    return ctx.reply(MSG.noBranchesAction, KB.noBranchesActionKeyboard());
-  }
   const session = getSession(ctx.from.id);
-  session.step = 'expense_branch';
-  session.data = {};
-  return ctx.reply(MSG.selectBranch, KB.branchKeyboard(branches));
+  const biz = session.biz;
+  if (!hasPermission(biz, 'expenses.create')) {
+    return ctx.reply(MSG.permissionDenied, getMenu(session));
+  }
+  return checkSectionPin(ctx, 'expenses', async () => {
+    const branches = await getAllBranches(biz?.businessId);
+    if (branches.length === 0) {
+      return ctx.reply(MSG.noBranchesAction, KB.noBranchesActionKeyboard());
+    }
+    session.step = 'expense_branch';
+    session.data = {};
+    return ctx.reply(MSG.selectBranch, KB.branchKeyboard(branches));
+  });
 }
 
 async function handleExpenseBranch(ctx, branchName) {
-  const branches = await getAllBranches();
+  const session = getSession(ctx.from.id);
+  const branches = await getAllBranches(session.biz?.businessId);
   const branch = branches.find(b => b.name === branchName);
   if (!branch) return ctx.reply(MSG.selectBranch, KB.branchKeyboard(branches));
-  const session = getSession(ctx.from.id);
-  session.data.branchId = branch.id;
+  session.data.branchId   = branch.id;
   session.data.branchName = branch.name;
   session.step = 'expense_amount';
   return ctx.reply(MSG.askExpenseAmount, KB.cancelKeyboard);
 }
-
-const EXPENSE_VALID_CATEGORIES = [
-  'مواد اولیه', 'شیر و خامه', 'میوه', 'شکلات و تاپینگ',
-  'بسته‌بندی', 'حقوق و دستمزد', 'اجاره', 'قبوض',
-  'تعمیرات', 'تبلیغات', 'پیک و ارسال', 'سایر',
-];
 
 async function handleExpenseStep(ctx, text) {
   const session = getSession(ctx.from.id);
@@ -253,18 +436,21 @@ async function handleExpenseStep(ctx, text) {
       return ctx.reply(MSG.askExpenseCategory, KB.expenseCategoryKeyboard());
     }
     data.category = text;
-    session.step = 'expense_note';
+    session.step  = 'expense_note';
     return ctx.reply(MSG.askExpenseNote, KB.cancelKeyboard);
   }
 
   if (step === 'expense_note') {
-    data.note = text === 'ندارم' ? null : text;
+    data.note        = text === 'ندارم' ? null : text;
     data.expenseDate = data.expenseDate || getTodayDate();
-    session.step = 'expense_confirm';
+    session.step     = 'expense_confirm';
     return ctx.reply(
       MSG.confirmExpense({
-        branchName: data.branchName, date: gDate(data.expenseDate),
-        amount: formatMoney(data.amount), category: data.category, note: data.note,
+        branchName: data.branchName,
+        date:       gDate(data.expenseDate),
+        amount:     formatMoney(data.amount),
+        category:   data.category,
+        note:       data.note,
       }),
       KB.confirmExpenseKeyboard()
     );
@@ -274,16 +460,24 @@ async function handleExpenseStep(ctx, text) {
     if (text === '✅ تأیید و ذخیره') {
       const user = await findOrCreateUser(ctx.from.id, ctx.from.first_name);
       await recordExpense({
-        branchId: data.branchId, userId: user.id, expenseDate: data.expenseDate,
-        amount: data.amount, category: data.category, note: data.note,
+        businessId:  session.biz?.businessId,
+        branchId:    data.branchId,
+        userId:      user.id,
+        expenseDate: data.expenseDate,
+        amount:      data.amount,
+        category:    data.category,
+        note:        data.note,
       });
       clearSession(ctx.from.id);
       return ctx.reply(
         MSG.expenseSavedWithSummary({
-          branchName: data.branchName, date: gDate(data.expenseDate),
-          amount: formatMoney(data.amount), category: data.category, note: data.note,
+          branchName: data.branchName,
+          date:       gDate(data.expenseDate),
+          amount:     formatMoney(data.amount),
+          category:   data.category,
+          note:       data.note,
         }),
-        KB.mainMenu
+        getMenu(getSession(ctx.from.id))
       );
     }
     if (text === '✏️ ویرایش') {
@@ -292,106 +486,98 @@ async function handleExpenseStep(ctx, text) {
       return ctx.reply(MSG.editStarted + '\n\n' + MSG.askExpenseAmount, KB.cancelKeyboard);
     }
     clearSession(ctx.from.id);
-    return ctx.reply(MSG.cancelled, KB.mainMenu);
+    return ctx.reply(MSG.cancelled, getMenu(getSession(ctx.from.id)));
   }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// جریان گزارش (کلاسیک — daily/weekly/monthly)
+// منوی گزارش‌ها
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function startReportFlow(ctx, reportType) {
-  const branches = await getAllBranches();
-  if (branches.length === 0) return ctx.reply(MSG.noBranches, KB.mainMenu);
+async function startReportsMenu(ctx) {
   const session = getSession(ctx.from.id);
-  session.step = `report_type_${reportType}`;
-  session.data = { reportType };
-  return ctx.reply(MSG.selectReportType, KB.reportTypeKeyboard());
+  const biz = session.biz;
+  if (!hasPermission(biz, 'reports.view')) {
+    return ctx.reply(MSG.permissionDenied, getMenu(session));
+  }
+  return checkSectionPin(ctx, 'reports', async () => {
+    const branches = await getAllBranches(biz?.businessId);
+    if (branches.length === 0) return ctx.reply(MSG.noBranches, getMenu(session));
+    session.step = 'reports_menu';
+    session.data = {};
+    return ctx.reply(MSG.reportsMenu, KB.reportsMenuKeyboard());
+  });
+}
+
+async function handleReportsMenu(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  const branches = await getAllBranches(biz?.businessId);
+  if (branches.length === 0) {
+    clearSession(ctx.from.id);
+    return ctx.reply(MSG.noBranches, getMenu(session));
+  }
+
+  if (text === '📊 گزارش امروز' || text === '📅 گزارش هفتگی' || text === '🗓️ گزارش ماهانه') {
+    const typeMap = { '📊 گزارش امروز': 'daily', '📅 گزارش هفتگی': 'weekly', '🗓️ گزارش ماهانه': 'monthly' };
+    const reportType = typeMap[text];
+    session.step = `report_type_${reportType}`;
+    session.data = { reportType };
+    return ctx.reply(MSG.selectReportType, KB.reportTypeKeyboard());
+  }
+  if (text === '🏪 گزارش شعبه')     return startBranchReport(ctx);
+  if (text === '🔁 مقایسه شعبه‌ها') return startCompareReport(ctx);
+  if (text === '📆 بازه دلخواه')     return startCustomReport(ctx);
+
+  return ctx.reply(MSG.reportsMenu, KB.reportsMenuKeyboard());
 }
 
 async function handleReportTypeSelection(ctx, text) {
   const session = getSession(ctx.from.id);
+  const biz = session.biz;
   const { reportType } = session.data;
 
   if (text === 'همه شعبه‌ها') {
     let report;
-    if (reportType === 'daily')        report = await getDailyAllBranches();
-    else if (reportType === 'weekly')  report = await getWeeklyAllBranches();
-    else                               report = await getMonthlyAllBranches();
+    if (reportType === 'daily')       report = await getDailyAllBranches(biz?.businessId);
+    else if (reportType === 'weekly') report = await getWeeklyAllBranches(biz?.businessId);
+    else                              report = await getMonthlyAllBranches(biz?.businessId);
     clearSession(ctx.from.id);
-    return ctx.reply(report, KB.mainMenu);
+    return ctx.reply(report, getMenu(getSession(ctx.from.id)));
   }
-
   if (text === 'یک شعبه') {
-    const branches = await getAllBranches();
+    const branches = await getAllBranches(biz?.businessId);
     session.step = `report_branch_${reportType}`;
     return ctx.reply(MSG.selectBranchForReport, KB.branchKeyboard(branches));
   }
 }
 
 async function handleReportBranchSelection(ctx, branchName, reportType) {
-  const branches = await getAllBranches();
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  const branches = await getAllBranches(biz?.businessId);
   const branch = branches.find(b => b.name === branchName);
   if (!branch) return ctx.reply(MSG.selectBranchForReport, KB.branchKeyboard(branches));
 
   let report;
-  if (reportType === 'daily')        report = await getDailyReport(branch.id);
-  else if (reportType === 'weekly')  report = await getWeeklyReport(branch.id);
-  else                               report = await getMonthlyReport(branch.id);
+  if (reportType === 'daily')       report = await getDailyReport(branch.id, biz?.businessId);
+  else if (reportType === 'weekly') report = await getWeeklyReport(branch.id, biz?.businessId);
+  else                              report = await getMonthlyReport(branch.id, biz?.businessId);
 
   clearSession(ctx.from.id);
-  return ctx.reply(report, KB.mainMenu);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// منوی گزارش‌ها (Phase 4)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-async function startReportsMenu(ctx) {
-  const branches = await getAllBranches();
-  if (branches.length === 0) return ctx.reply(MSG.noBranches, KB.mainMenu);
-  const session = getSession(ctx.from.id);
-  session.step = 'reports_menu';
-  session.data = {};
-  return ctx.reply(MSG.reportsMenu, KB.reportsMenuKeyboard());
-}
-
-async function handleReportsMenu(ctx, text) {
-  const branches = await getAllBranches();
-  if (branches.length === 0) {
-    clearSession(ctx.from.id);
-    return ctx.reply(MSG.noBranches, KB.mainMenu);
-  }
-  const session = getSession(ctx.from.id);
-
-  if (text === '📊 گزارش امروز' || text === '📅 گزارش هفتگی' || text === '🗓️ گزارش ماهانه') {
-    const typeMap = {
-      '📊 گزارش امروز':  'daily',
-      '📅 گزارش هفتگی':  'weekly',
-      '🗓️ گزارش ماهانه': 'monthly',
-    };
-    const reportType = typeMap[text];
-    session.step = `report_type_${reportType}`;
-    session.data = { reportType };
-    return ctx.reply(MSG.selectReportType, KB.reportTypeKeyboard());
-  }
-
-  if (text === '🏪 گزارش شعبه')      return startBranchReport(ctx);
-  if (text === '🔁 مقایسه شعبه‌ها')  return startCompareReport(ctx);
-  if (text === '📆 بازه دلخواه')      return startCustomReport(ctx);
-
-  return ctx.reply(MSG.reportsMenu, KB.reportsMenuKeyboard());
+  return ctx.reply(report, getMenu(getSession(ctx.from.id)));
 }
 
 // ─── مقایسه شعبه‌ها ───────────────────────────────────────────────────────────
 
 async function startCompareReport(ctx) {
-  const branches = await getAllBranches();
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  const branches = await getAllBranches(biz?.businessId);
   if (branches.length < 2) {
     clearSession(ctx.from.id);
-    return ctx.reply(MSG.notEnoughBranches, KB.mainMenu);
+    return ctx.reply(MSG.notEnoughBranches, getMenu(getSession(ctx.from.id)));
   }
-  const session = getSession(ctx.from.id);
   session.step = 'compare_period';
   session.data = {};
   return ctx.reply(MSG.selectPeriod, KB.periodKeyboard());
@@ -399,36 +585,35 @@ async function startCompareReport(ctx) {
 
 async function handleComparePeriod(ctx, text) {
   const session = getSession(ctx.from.id);
+  const biz = session.biz;
 
   if (text === '📊 امروز') {
-    const report = await getDailyComparison();
+    const report = await getDailyComparison(biz?.businessId);
     clearSession(ctx.from.id);
-    return ctx.reply(report, KB.mainMenu);
+    return ctx.reply(report, getMenu(getSession(ctx.from.id)));
   }
   if (text === '📅 این هفته') {
-    const report = await getWeeklyComparison();
+    const report = await getWeeklyComparison(biz?.businessId);
     clearSession(ctx.from.id);
-    return ctx.reply(report, KB.mainMenu);
+    return ctx.reply(report, getMenu(getSession(ctx.from.id)));
   }
   if (text === '🗓️ این ماه') {
-    const report = await getMonthlyComparison();
+    const report = await getMonthlyComparison(biz?.businessId);
     clearSession(ctx.from.id);
-    return ctx.reply(report, KB.mainMenu);
+    return ctx.reply(report, getMenu(getSession(ctx.from.id)));
   }
   if (text === '📆 بازه دلخواه') {
     session.data.datePickerFlow = 'compare';
     return startPickingDate(ctx, 'start');
   }
-
   return ctx.reply(MSG.selectPeriod, KB.periodKeyboard());
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// تقویم دکمه‌ای — flow مشترک برای انتخاب بازه شمسی
+// تقویم دکمه‌ای
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function startPickingDate(ctx, mode) {
-  // mode: 'start' | 'end'
   const session = getSession(ctx.from.id);
   const { jy } = getTodayJalaliParts();
   session.data.datePickerMode = mode;
@@ -443,8 +628,7 @@ async function handleDatepickMonth(ctx, text) {
   const monthIndex = JALALI_MONTHS.indexOf(text);
   if (monthIndex === -1) {
     const mode = session.data.datePickerMode;
-    const msg = mode === 'start' ? MSG.pickStartMonth : MSG.pickEndMonth;
-    return ctx.reply(msg, KB.jalaliMonthsKeyboard());
+    return ctx.reply(mode === 'start' ? MSG.pickStartMonth : MSG.pickEndMonth, KB.jalaliMonthsKeyboard());
   }
   const month = monthIndex + 1;
   const year  = session.data.datePickerYear;
@@ -452,23 +636,25 @@ async function handleDatepickMonth(ctx, text) {
   session.data.datePickerMonthName = text;
   session.step = 'datepick_day';
   const mode = session.data.datePickerMode;
-  const msg  = mode === 'start' ? MSG.pickStartDay(text) : MSG.pickEndDay(text);
-  return ctx.reply(msg, KB.jalaliDaysKeyboard(month, year));
+  return ctx.reply(
+    mode === 'start' ? MSG.pickStartDay(text) : MSG.pickEndDay(text),
+    KB.jalaliDaysKeyboard(month, year)
+  );
 }
 
 async function handleDatepickDay(ctx, text) {
   const session = getSession(ctx.from.id);
   const { datePickerMode, datePickerYear, datePickerMonth, datePickerMonthName } = session.data;
 
-  const normalized = normalizeDateInput(text);
-  const day    = parseInt(normalized, 10);
+  const norm   = normalizeDateInput(text);
+  const day    = parseInt(norm, 10);
   const maxDay = getJalaliMonthDays(datePickerMonth, datePickerYear);
 
   if (isNaN(day) || day < 1 || day > maxDay) {
-    const msg = datePickerMode === 'start'
-      ? MSG.pickStartDay(datePickerMonthName)
-      : MSG.pickEndDay(datePickerMonthName);
-    return ctx.reply(msg, KB.jalaliDaysKeyboard(datePickerMonth, datePickerYear));
+    return ctx.reply(
+      datePickerMode === 'start' ? MSG.pickStartDay(datePickerMonthName) : MSG.pickEndDay(datePickerMonthName),
+      KB.jalaliDaysKeyboard(datePickerMonth, datePickerYear)
+    );
   }
 
   const pad2 = n => String(n).padStart(2, '0');
@@ -496,33 +682,35 @@ async function handleDatepickDay(ctx, text) {
 async function finalizeDatePicker(ctx) {
   const session = getSession(ctx.from.id);
   const { datePickerFlow, startDate, endDate, scope, branchId } = session.data;
+  const biz = session.biz;
 
   let report;
   if (datePickerFlow === 'compare') {
-    report = await getCustomComparison(startDate, endDate);
+    report = await getCustomComparison(startDate, endDate, biz?.businessId);
   } else if (datePickerFlow === 'custom') {
     report = scope === 'all'
-      ? await getCustomAllBranches(startDate, endDate)
-      : await getCustomReport(branchId, startDate, endDate);
+      ? await getCustomAllBranches(startDate, endDate, biz?.businessId)
+      : await getCustomReport(branchId, startDate, endDate, biz?.businessId);
   } else if (datePickerFlow === 'branch') {
-    report = await getCustomReport(branchId, startDate, endDate);
+    report = await getCustomReport(branchId, startDate, endDate, biz?.businessId);
   } else {
-    report = await getCustomAllBranches(startDate, endDate);
+    report = await getCustomAllBranches(startDate, endDate, biz?.businessId);
   }
 
   clearSession(ctx.from.id);
-  return ctx.reply(report, KB.mainMenu);
+  return ctx.reply(report, getMenu(getSession(ctx.from.id)));
 }
 
 // ─── گزارش بازه دلخواه ───────────────────────────────────────────────────────
 
 async function startCustomReport(ctx) {
-  const branches = await getAllBranches();
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  const branches = await getAllBranches(biz?.businessId);
   if (branches.length === 0) {
     clearSession(ctx.from.id);
-    return ctx.reply(MSG.noBranches, KB.mainMenu);
+    return ctx.reply(MSG.noBranches, getMenu(getSession(ctx.from.id)));
   }
-  const session = getSession(ctx.from.id);
   session.step = 'custom_scope';
   session.data = {};
   return ctx.reply(MSG.selectReportType, KB.reportTypeKeyboard());
@@ -530,13 +718,14 @@ async function startCustomReport(ctx) {
 
 async function handleCustomScope(ctx, text) {
   const session = getSession(ctx.from.id);
+  const biz = session.biz;
   if (text === 'همه شعبه‌ها') {
     session.data.scope          = 'all';
     session.data.datePickerFlow = 'custom';
     return startPickingDate(ctx, 'start');
   }
   if (text === 'یک شعبه') {
-    const branches = await getAllBranches();
+    const branches = await getAllBranches(biz?.businessId);
     session.data.scope = 'single';
     session.step       = 'custom_branch';
     return ctx.reply(MSG.selectBranchForReport, KB.branchKeyboard(branches));
@@ -545,37 +734,38 @@ async function handleCustomScope(ctx, text) {
 }
 
 async function handleCustomBranch(ctx, text) {
-  const branches = await getAllBranches();
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  const branches = await getAllBranches(biz?.businessId);
   const branch = branches.find(b => b.name === text);
   if (!branch) return ctx.reply(MSG.selectBranchForReport, KB.branchKeyboard(branches));
-  const session = getSession(ctx.from.id);
   session.data.branchId       = branch.id;
   session.data.branchName     = branch.name;
   session.data.datePickerFlow = 'custom';
   return startPickingDate(ctx, 'start');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// گزارش شعبه — انتخاب شعبه سپس بازه زمانی
-// ═══════════════════════════════════════════════════════════════════════════════
+// ─── گزارش شعبه ──────────────────────────────────────────────────────────────
 
 async function startBranchReport(ctx) {
-  const branches = await getAllBranches();
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  const branches = await getAllBranches(biz?.businessId);
   if (branches.length === 0) {
     clearSession(ctx.from.id);
-    return ctx.reply(MSG.noBranches, KB.mainMenu);
+    return ctx.reply(MSG.noBranches, getMenu(getSession(ctx.from.id)));
   }
-  const session = getSession(ctx.from.id);
   session.step = 'branch_report_select';
   session.data = {};
   return ctx.reply(MSG.selectBranchForReport, KB.branchKeyboard(branches));
 }
 
 async function handleBranchReportSelect(ctx, text) {
-  const branches = await getAllBranches();
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  const branches = await getAllBranches(biz?.businessId);
   const branch = branches.find(b => b.name === text);
   if (!branch) return ctx.reply(MSG.selectBranchForReport, KB.branchKeyboard(branches));
-  const session = getSession(ctx.from.id);
   session.data.branchId   = branch.id;
   session.data.branchName = branch.name;
   session.step = 'branch_report_period';
@@ -584,22 +774,23 @@ async function handleBranchReportSelect(ctx, text) {
 
 async function handleBranchReportPeriod(ctx, text) {
   const session = getSession(ctx.from.id);
+  const biz = session.biz;
   const { branchId } = session.data;
 
   if (text === '📊 امروز') {
-    const report = await getDailyReport(branchId);
+    const report = await getDailyReport(branchId, biz?.businessId);
     clearSession(ctx.from.id);
-    return ctx.reply(report, KB.mainMenu);
+    return ctx.reply(report, getMenu(getSession(ctx.from.id)));
   }
   if (text === '📅 این هفته') {
-    const report = await getWeeklyReport(branchId);
+    const report = await getWeeklyReport(branchId, biz?.businessId);
     clearSession(ctx.from.id);
-    return ctx.reply(report, KB.mainMenu);
+    return ctx.reply(report, getMenu(getSession(ctx.from.id)));
   }
   if (text === '🗓️ این ماه') {
-    const report = await getMonthlyReport(branchId);
+    const report = await getMonthlyReport(branchId, biz?.businessId);
     clearSession(ctx.from.id);
-    return ctx.reply(report, KB.mainMenu);
+    return ctx.reply(report, getMenu(getSession(ctx.from.id)));
   }
   if (text === '📆 بازه دلخواه') {
     session.data.datePickerFlow = 'branch';
@@ -609,11 +800,15 @@ async function handleBranchReportPeriod(ctx, text) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// جریان مدیریت شعبه‌ها
+// مدیریت شعبه‌ها
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function startBranchManagement(ctx) {
   const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  if (!hasPermission(biz, 'branches.manage')) {
+    return ctx.reply(MSG.permissionDenied, getMenu(session));
+  }
   session.step = 'branch_manage';
   session.data = {};
   return ctx.reply('🏪 مدیریت شعبه‌ها:', KB.branchManageKeyboard());
@@ -621,11 +816,12 @@ async function startBranchManagement(ctx) {
 
 async function handleBranchManage(ctx, text) {
   const session = getSession(ctx.from.id);
+  const biz = session.biz;
 
   if (text === '📋 لیست شعبه‌ها') {
-    const branches = await getAllBranches();
+    const branches = await getAllBranches(biz?.businessId);
     clearSession(ctx.from.id);
-    return ctx.reply(MSG.branchList(branches), KB.mainMenu);
+    return ctx.reply(MSG.branchList(branches), getMenu(getSession(ctx.from.id)));
   }
   if (text === '➕ افزودن شعبه') {
     session.step = 'branch_add_name';
@@ -639,78 +835,64 @@ async function handleBranchManage(ctx, text) {
   }
   if (session.step === 'branch_add_address') {
     const address = text === 'ندارم' ? null : text.trim();
-    const branch = await createBranch(session.data.branchName, address);
+    const branch = await createBranch(session.data.branchName, address, biz?.businessId);
     clearSession(ctx.from.id);
-    return ctx.reply(MSG.branchCreated(branch.name), KB.mainMenu);
+    return ctx.reply(MSG.branchCreated(branch.name), getMenu(getSession(ctx.from.id)));
   }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// جریان مدیریت ثبت‌ها
+// مدیریت ثبت‌ها
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function startManageRecords(ctx) {
   const session = getSession(ctx.from.id);
-  session.step = 'records_menu';
-  session.data = {};
-  return ctx.reply(MSG.manageRecordsMenu, KB.manageRecordsKeyboard());
+  const biz = session.biz;
+  if (!hasPermission(biz, 'manage_records.view')) {
+    return ctx.reply(MSG.permissionDenied, getMenu(session));
+  }
+  return checkSectionPin(ctx, 'manage_records', () => {
+    session.step = 'records_menu';
+    session.data = {};
+    return ctx.reply(MSG.manageRecordsMenu, KB.manageRecordsKeyboard());
+  });
 }
 
 async function handleRecordsMenu(ctx, text) {
   const session = getSession(ctx.from.id);
-
-  if (text === '📋 آخرین فروش‌ها') return handleViewRecentSales(ctx);
-  if (text === '📋 آخرین مخارج')   return handleViewRecentExpenses(ctx);
-  if (text === '🗑️ حذف فروش')      return startDeleteSale(ctx);
-  if (text === '🗑️ حذف خرج')       return startDeleteExpense(ctx);
-  if (text === '✏️ ویرایش فروش')   return startEditSale(ctx);
-  if (text === '✏️ ویرایش خرج')    return startEditExpense(ctx);
-
-  // هر ورودی نامعتبر: منو را دوباره نشان بده
+  if (text === '📋 آخرین فروش‌ها')   return handleViewRecentSales(ctx);
+  if (text === '📋 آخرین مخارج')     return handleViewRecentExpenses(ctx);
+  if (text === '🗑️ حذف فروش')        return startDeleteSale(ctx);
+  if (text === '🗑️ حذف خرج')         return startDeleteExpense(ctx);
+  if (text === '✏️ ویرایش فروش')     return startEditSale(ctx);
+  if (text === '✏️ ویرایش خرج')      return startEditExpense(ctx);
   session.step = 'records_menu';
   return ctx.reply(MSG.manageRecordsMenu, KB.manageRecordsKeyboard());
 }
 
-// ─── نمایش آخرین فروش‌ها ─────────────────────────────────────────────────────
 async function handleViewRecentSales(ctx) {
   const session = getSession(ctx.from.id);
-  session.step = 'records_menu'; // در منو بمان
-
-  const sales = await getRecentSales(10);
-  if (sales.length === 0) {
-    return ctx.reply(MSG.noRecordsYet('فروش'), KB.manageRecordsKeyboard());
-  }
+  session.step = 'records_menu';
+  const sales = await getRecentSales(10, session.biz?.businessId);
+  if (sales.length === 0) return ctx.reply(MSG.noRecordsYet('فروش'), KB.manageRecordsKeyboard());
   const formatted = sales.map(s => ({
-    id: s.id,
-    branchName: s.branch_name || '—',
-    date: gDate(s.sale_date),
-    cash: formatMoney(s.cash_amount),
-    pos: formatMoney(s.pos_amount),
-    cardTransfer: formatMoney(s.card_transfer_amount),
-    online: formatMoney(s.online_amount),
+    id: s.id, branchName: s.branch_name || '—', date: gDate(s.sale_date),
+    cash: formatMoney(s.cash_amount), pos: formatMoney(s.pos_amount),
+    cardTransfer: formatMoney(s.card_transfer_amount), online: formatMoney(s.online_amount),
     total: formatMoney((s.cash_amount || 0) + (s.pos_amount || 0) + (s.card_transfer_amount || 0) + (s.online_amount || 0)),
-    orderCount: formatNumber(s.order_count),
-    note: s.note,
+    orderCount: formatNumber(s.order_count), note: s.note,
   }));
   return ctx.reply(MSG.recentSalesList(formatted), KB.manageRecordsKeyboard());
 }
 
-// ─── نمایش آخرین مخارج ───────────────────────────────────────────────────────
 async function handleViewRecentExpenses(ctx) {
   const session = getSession(ctx.from.id);
   session.step = 'records_menu';
-
-  const expenses = await getRecentExpenses(10);
-  if (expenses.length === 0) {
-    return ctx.reply(MSG.noRecordsYet('خرج'), KB.manageRecordsKeyboard());
-  }
+  const expenses = await getRecentExpenses(10, session.biz?.businessId);
+  if (expenses.length === 0) return ctx.reply(MSG.noRecordsYet('خرج'), KB.manageRecordsKeyboard());
   const formatted = expenses.map(e => ({
-    id: e.id,
-    branchName: e.branch_name || '—',
-    date: gDate(e.expense_date),
-    amount: formatMoney(e.amount),
-    category: e.category,
-    note: e.note,
+    id: e.id, branchName: e.branch_name || '—', date: gDate(e.expense_date),
+    amount: formatMoney(e.amount), category: e.category, note: e.note,
   }));
   return ctx.reply(MSG.recentExpensesList(formatted), KB.manageRecordsKeyboard());
 }
@@ -733,23 +915,19 @@ async function handleDeleteSaleStep(ctx, text) {
     const sale = await getSaleById(id);
     if (!sale) return ctx.reply(MSG.recordNotFound, KB.cancelKeyboard);
     const branch = await getBranchById(sale.branch_id);
-    data.saleId = id;
+    data.saleId  = id;
     session.step = 'delete_sale_confirm';
-    return ctx.reply(
-      MSG.confirmDeleteSale(formatSaleData(sale, branch)),
-      KB.confirmDeleteKeyboard()
-    );
+    return ctx.reply(MSG.confirmDeleteSale(formatSaleData(sale, branch)), KB.confirmDeleteKeyboard());
   }
 
   if (step === 'delete_sale_confirm') {
     if (text === '🗑️ بله، حذف شود') {
       const ok = await deleteSale(data.saleId);
       clearSession(ctx.from.id);
-      if (ok) return ctx.reply(MSG.saleDeleted(data.saleId), KB.mainMenu);
-      return ctx.reply(MSG.recordNotFound, KB.mainMenu);
+      return ctx.reply(ok ? MSG.saleDeleted(data.saleId) : MSG.recordNotFound, getMenu(getSession(ctx.from.id)));
     }
     clearSession(ctx.from.id);
-    return ctx.reply(MSG.cancelled, KB.mainMenu);
+    return ctx.reply(MSG.cancelled, getMenu(getSession(ctx.from.id)));
   }
 }
 
@@ -772,15 +950,12 @@ async function handleDeleteExpenseStep(ctx, text) {
     if (!expense) return ctx.reply(MSG.recordNotFound, KB.cancelKeyboard);
     const branch = await getBranchById(expense.branch_id);
     data.expenseId = id;
-    session.step = 'delete_expense_confirm';
+    session.step   = 'delete_expense_confirm';
     return ctx.reply(
       MSG.confirmDeleteExpense({
-        id: expense.id,
-        branchName: branch ? branch.name : '—',
-        date: gDate(expense.expense_date),
-        amount: formatMoney(expense.amount),
-        category: expense.category,
-        note: expense.note,
+        id: expense.id, branchName: branch ? branch.name : '—',
+        date: gDate(expense.expense_date), amount: formatMoney(expense.amount),
+        category: expense.category, note: expense.note,
       }),
       KB.confirmDeleteKeyboard()
     );
@@ -790,11 +965,10 @@ async function handleDeleteExpenseStep(ctx, text) {
     if (text === '🗑️ بله، حذف شود') {
       const ok = await deleteExpense(data.expenseId);
       clearSession(ctx.from.id);
-      if (ok) return ctx.reply(MSG.expenseDeleted(data.expenseId), KB.mainMenu);
-      return ctx.reply(MSG.recordNotFound, KB.mainMenu);
+      return ctx.reply(ok ? MSG.expenseDeleted(data.expenseId) : MSG.recordNotFound, getMenu(getSession(ctx.from.id)));
     }
     clearSession(ctx.from.id);
-    return ctx.reply(MSG.cancelled, KB.mainMenu);
+    return ctx.reply(MSG.cancelled, getMenu(getSession(ctx.from.id)));
   }
 }
 
@@ -807,11 +981,11 @@ async function startEditSale(ctx) {
 }
 
 const EDIT_SALE_NUMERIC_STEPS = [
-  { key: 'edit_sale_cash',   nextAsk: () => MSG.askPos,          nextStep: 'edit_sale_pos',    field: 'cash' },
-  { key: 'edit_sale_pos',    nextAsk: () => MSG.askCardTransfer,  nextStep: 'edit_sale_card',   field: 'pos' },
-  { key: 'edit_sale_card',   nextAsk: () => MSG.askOnline,        nextStep: 'edit_sale_online', field: 'cardTransfer' },
-  { key: 'edit_sale_online', nextAsk: () => MSG.askOrderCount,    nextStep: 'edit_sale_orders', field: 'online' },
-  { key: 'edit_sale_orders', nextAsk: () => MSG.askNote,          nextStep: 'edit_sale_note',   field: 'orderCount' },
+  { key: 'edit_sale_cash',   nextAsk: () => MSG.askPos,         nextStep: 'edit_sale_pos',    field: 'cash' },
+  { key: 'edit_sale_pos',    nextAsk: () => MSG.askCardTransfer, nextStep: 'edit_sale_card',   field: 'pos' },
+  { key: 'edit_sale_card',   nextAsk: () => MSG.askOnline,       nextStep: 'edit_sale_online', field: 'cardTransfer' },
+  { key: 'edit_sale_online', nextAsk: () => MSG.askOrderCount,   nextStep: 'edit_sale_orders', field: 'online' },
+  { key: 'edit_sale_orders', nextAsk: () => MSG.askNote,         nextStep: 'edit_sale_note',   field: 'orderCount' },
 ];
 
 async function handleEditSaleStep(ctx, text) {
@@ -824,17 +998,12 @@ async function handleEditSaleStep(ctx, text) {
     const sale = await getSaleById(id);
     if (!sale) return ctx.reply(MSG.recordNotFound, KB.cancelKeyboard);
     const branch = await getBranchById(sale.branch_id);
-
     data.editId    = sale.id;
     data.branchId  = sale.branch_id;
     data.branchName = branch ? branch.name : '—';
-    data.saleDate  = sale.sale_date; // تاریخ اصلی حفظ می‌شود
+    data.saleDate  = sale.sale_date;
     session.step   = 'edit_sale_cash';
-
-    return ctx.reply(
-      MSG.showSaleForEdit(formatSaleData(sale, branch)) + '\n\n' + MSG.askCash,
-      KB.cancelKeyboard
-    );
+    return ctx.reply(MSG.showSaleForEdit(formatSaleData(sale, branch)) + '\n\n' + MSG.askCash, KB.cancelKeyboard);
   }
 
   const current = EDIT_SALE_NUMERIC_STEPS.find(s => s.key === step);
@@ -847,7 +1016,7 @@ async function handleEditSaleStep(ctx, text) {
   }
 
   if (step === 'edit_sale_note') {
-    data.note = text === 'ندارم' ? null : text;
+    data.note    = text === 'ندارم' ? null : text;
     session.step = 'edit_sale_confirm';
     return ctx.reply(MSG.confirmSale(buildSaleConfirmData(data)), KB.confirmSaleKeyboard());
   }
@@ -861,7 +1030,7 @@ async function handleEditSaleStep(ctx, text) {
       });
       const id = data.editId;
       clearSession(ctx.from.id);
-      return ctx.reply(MSG.saleUpdated(id), KB.mainMenu);
+      return ctx.reply(MSG.saleUpdated(id), getMenu(getSession(ctx.from.id)));
     }
     if (text === '✏️ ویرایش') {
       session.data = { editId: data.editId, branchId: data.branchId, branchName: data.branchName, saleDate: data.saleDate };
@@ -869,7 +1038,7 @@ async function handleEditSaleStep(ctx, text) {
       return ctx.reply(MSG.editStarted + '\n\n' + MSG.askCash, KB.cancelKeyboard);
     }
     clearSession(ctx.from.id);
-    return ctx.reply(MSG.cancelled, KB.mainMenu);
+    return ctx.reply(MSG.cancelled, getMenu(getSession(ctx.from.id)));
   }
 }
 
@@ -891,21 +1060,16 @@ async function handleEditExpenseStep(ctx, text) {
     const expense = await getExpenseById(id);
     if (!expense) return ctx.reply(MSG.recordNotFound, KB.cancelKeyboard);
     const branch = await getBranchById(expense.branch_id);
-
-    data.editId     = expense.id;
-    data.branchId   = expense.branch_id;
-    data.branchName = branch ? branch.name : '—';
+    data.editId      = expense.id;
+    data.branchId    = expense.branch_id;
+    data.branchName  = branch ? branch.name : '—';
     data.expenseDate = expense.expense_date;
-    session.step    = 'edit_expense_amount';
-
+    session.step     = 'edit_expense_amount';
     return ctx.reply(
       MSG.showExpenseForEdit({
-        id: expense.id,
-        branchName: data.branchName,
-        date: gDate(expense.expense_date),
-        amount: formatMoney(expense.amount),
-        category: expense.category,
-        note: expense.note,
+        id: expense.id, branchName: data.branchName,
+        date: gDate(expense.expense_date), amount: formatMoney(expense.amount),
+        category: expense.category, note: expense.note,
       }) + '\n\n' + MSG.askExpenseAmount,
       KB.cancelKeyboard
     );
@@ -914,7 +1078,7 @@ async function handleEditExpenseStep(ctx, text) {
   if (step === 'edit_expense_amount') {
     const n = parseNumber(text);
     if (n === null || n <= 0) return ctx.reply(MSG.invalidAmount, KB.cancelKeyboard);
-    data.amount = n;
+    data.amount  = n;
     session.step = 'edit_expense_category';
     return ctx.reply(MSG.askExpenseCategory, KB.expenseCategoryKeyboard());
   }
@@ -924,12 +1088,12 @@ async function handleEditExpenseStep(ctx, text) {
       return ctx.reply(MSG.askExpenseCategory, KB.expenseCategoryKeyboard());
     }
     data.category = text;
-    session.step = 'edit_expense_note';
+    session.step  = 'edit_expense_note';
     return ctx.reply(MSG.askExpenseNote, KB.cancelKeyboard);
   }
 
   if (step === 'edit_expense_note') {
-    data.note = text === 'ندارم' ? null : text;
+    data.note    = text === 'ندارم' ? null : text;
     session.step = 'edit_expense_confirm';
     return ctx.reply(
       MSG.confirmExpense({
@@ -942,12 +1106,10 @@ async function handleEditExpenseStep(ctx, text) {
 
   if (step === 'edit_expense_confirm') {
     if (text === '✅ تأیید و ذخیره') {
-      await updateExpense(data.editId, {
-        amount: data.amount, category: data.category, note: data.note,
-      });
+      await updateExpense(data.editId, { amount: data.amount, category: data.category, note: data.note });
       const id = data.editId;
       clearSession(ctx.from.id);
-      return ctx.reply(MSG.expenseUpdated(id), KB.mainMenu);
+      return ctx.reply(MSG.expenseUpdated(id), getMenu(getSession(ctx.from.id)));
     }
     if (text === '✏️ ویرایش') {
       session.data = { editId: data.editId, branchId: data.branchId, branchName: data.branchName, expenseDate: data.expenseDate };
@@ -955,118 +1117,170 @@ async function handleEditExpenseStep(ctx, text) {
       return ctx.reply(MSG.editStarted + '\n\n' + MSG.askExpenseAmount, KB.cancelKeyboard);
     }
     clearSession(ctx.from.id);
-    return ctx.reply(MSG.cancelled, KB.mainMenu);
+    return ctx.reply(MSG.cancelled, getMenu(getSession(ctx.from.id)));
   }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// روتر اصلی پیام‌های متنی
+// مدیریت تیم
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function handleText(ctx) {
-  const text   = ctx.message.text;
-  const userId = ctx.from.id;
-  const session = getSession(userId);
+async function startTeamManagement(ctx) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  if (!hasPermission(biz, 'team.manage')) {
+    return ctx.reply(MSG.permissionDenied, getMenu(session));
+  }
+  session.step = 'team_menu';
+  session.data = {};
+  return ctx.reply(MSG.teamMenu, KB.teamMenuKeyboard());
+}
 
-  // لغو از هر جای ربات
-  if (text === '❌ لغو' || text === '🔙 بازگشت' || text === '🏠 منوی اصلی') {
-    clearSession(userId);
-    return ctx.reply(MSG.mainMenu, KB.mainMenu);
+async function handleTeamMenu(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+
+  if (text === '📋 لیست اعضا') {
+    const members = await getTeamMembers(biz.businessId);
+    return ctx.reply(MSG.teamList(members), KB.teamMenuKeyboard());
   }
 
-  // منوی اصلی (step=null)
-  if (!session.step) {
-    if (text === '💰 ثبت فروش امروز')  return startSaleFlow(ctx);
-    if (text === '🧾 ثبت خرج')         return startExpenseFlow(ctx);
-    if (text === '📊 گزارش‌ها')         return startReportsMenu(ctx);
-    if (text === '🏪 مدیریت شعبه‌ها')   return startBranchManagement(ctx);
-    if (text === '🗂️ مدیریت ثبت‌ها')   return startManageRecords(ctx);
-    if (text === '➕ افزودن شعبه')      return startQuickAddBranch(ctx);
-    if (text === '❓ راهنما') {
-      return ctx.reply(MSG.help, { parse_mode: 'Markdown', ...KB.mainMenu });
+  if (text === '➕ افزودن عضو') {
+    session.step = 'team_add_tgid';
+    return ctx.reply(MSG.askMemberTelegramId, KB.cancelKeyboard);
+  }
+  if (text === '🔄 تغییر نقش') {
+    session.step = 'team_change_tgid';
+    return ctx.reply(MSG.askMemberTelegramIdForChange, KB.cancelKeyboard);
+  }
+  if (text === '🚫 غیرفعال کردن') {
+    session.step = 'team_deactivate_tgid';
+    return ctx.reply(MSG.askMemberTelegramIdForDeactivate, KB.cancelKeyboard);
+  }
+
+  return ctx.reply(MSG.teamMenu, KB.teamMenuKeyboard());
+}
+
+async function handleTeamStep(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const { step, data } = session;
+  const biz = session.biz;
+
+  // ── افزودن عضو ──────────────────────────────────────────────────────────────
+  if (step === 'team_add_tgid') {
+    const tgId = parseId(text);
+    if (!tgId) return ctx.reply(MSG.invalidId, KB.cancelKeyboard);
+    const member = await getUserByTelegramId(tgId);
+    if (!member) return ctx.reply(MSG.memberNotFound, KB.cancelKeyboard);
+    data.memberUserId    = member.id;
+    data.memberName      = member.name;
+    data.memberTelegramId = tgId;
+    session.step = 'team_add_role';
+    return ctx.reply(MSG.selectRole, KB.roleSelectKeyboard());
+  }
+
+  if (step === 'team_add_role') {
+    const role = ROLE_MAP[text];
+    if (!role) return ctx.reply(MSG.selectRole, KB.roleSelectKeyboard());
+    await addTeamMember({ businessId: biz.businessId, userId: data.memberUserId, role });
+    const roleLabel = ROLE_LABELS[role] || role;
+    clearSession(ctx.from.id);
+    return ctx.reply(
+      MSG.memberAdded(data.memberName, role, roleLabel),
+      getMenu(getSession(ctx.from.id))
+    );
+  }
+
+  // ── تغییر نقش ────────────────────────────────────────────────────────────────
+  if (step === 'team_change_tgid') {
+    const tgId = parseId(text);
+    if (!tgId) return ctx.reply(MSG.invalidId, KB.cancelKeyboard);
+    const member = await getUserByTelegramId(tgId);
+    if (!member) return ctx.reply(MSG.memberNotFound, KB.cancelKeyboard);
+    const teamMembers = await getTeamMembers(biz.businessId);
+    const isMember = teamMembers.some(m => m.telegram_id === Number(tgId));
+    if (!isMember) return ctx.reply(MSG.memberNotInTeam, KB.cancelKeyboard);
+    data.memberUserId    = member.id;
+    data.memberName      = member.name;
+    session.step = 'team_change_role';
+    return ctx.reply(MSG.selectRole, KB.roleSelectKeyboard());
+  }
+
+  if (step === 'team_change_role') {
+    const role = ROLE_MAP[text];
+    if (!role) return ctx.reply(MSG.selectRole, KB.roleSelectKeyboard());
+    await updateMemberRole(biz.businessId, data.memberUserId, role);
+    const roleLabel = ROLE_LABELS[role] || role;
+    clearSession(ctx.from.id);
+    return ctx.reply(
+      MSG.memberRoleChanged(data.memberName, roleLabel),
+      getMenu(getSession(ctx.from.id))
+    );
+  }
+
+  // ── غیرفعال کردن ─────────────────────────────────────────────────────────────
+  if (step === 'team_deactivate_tgid') {
+    const tgId = parseId(text);
+    if (!tgId) return ctx.reply(MSG.invalidId, KB.cancelKeyboard);
+    const member = await getUserByTelegramId(tgId);
+    if (!member) return ctx.reply(MSG.memberNotFound, KB.cancelKeyboard);
+    const teamMembers = await getTeamMembers(biz.businessId);
+    const isMember = teamMembers.some(m => m.telegram_id === Number(tgId));
+    if (!isMember) return ctx.reply(MSG.memberNotInTeam, KB.cancelKeyboard);
+    data.memberUserId = member.id;
+    data.memberName   = member.name;
+    data.memberTelegramId = tgId;
+    session.step = 'team_deactivate_confirm';
+    return ctx.reply(
+      MSG.confirmDeactivateMember(member.name, tgId),
+      KB.confirmYesNoKeyboard()
+    );
+  }
+
+  if (step === 'team_deactivate_confirm') {
+    if (text === '✅ بله، مطمئنم') {
+      await deactivateMember(biz.businessId, data.memberUserId);
+      const name = data.memberName;
+      clearSession(ctx.from.id);
+      return ctx.reply(MSG.memberDeactivated(name), getMenu(getSession(ctx.from.id)));
     }
-    if (text === '⚙️ تنظیمات') return startSettings(ctx);
-    return ctx.reply(MSG.mainMenu, KB.mainMenu);
+    clearSession(ctx.from.id);
+    return ctx.reply(MSG.cancelled, getMenu(getSession(ctx.from.id)));
   }
-
-  // ── جریان فروش ─────────────────────────────────────────────────────────────
-  if (session.step === 'sale_branch') return handleSaleBranch(ctx, text);
-  if (session.step && session.step.startsWith('sale_')) return handleSaleStep(ctx, text);
-
-  // ── جریان خرج ──────────────────────────────────────────────────────────────
-  if (session.step === 'expense_branch') return handleExpenseBranch(ctx, text);
-  if (session.step && session.step.startsWith('expense_')) return handleExpenseStep(ctx, text);
-
-  // ── منوی گزارش‌ها ──────────────────────────────────────────────────────────
-  if (session.step === 'reports_menu')          return handleReportsMenu(ctx, text);
-  if (session.step === 'compare_period')        return handleComparePeriod(ctx, text);
-  if (session.step === 'datepick_month')        return handleDatepickMonth(ctx, text);
-  if (session.step === 'datepick_day')          return handleDatepickDay(ctx, text);
-  if (session.step === 'custom_scope')          return handleCustomScope(ctx, text);
-  if (session.step === 'custom_branch')         return handleCustomBranch(ctx, text);
-  if (session.step === 'branch_report_select')  return handleBranchReportSelect(ctx, text);
-  if (session.step === 'branch_report_period')  return handleBranchReportPeriod(ctx, text);
-
-  // ── جریان گزارش (کلاسیک) ───────────────────────────────────────────────────
-  if (session.step && session.step.startsWith('report_type_')) {
-    return handleReportTypeSelection(ctx, text);
-  }
-  if (session.step && session.step.startsWith('report_branch_')) {
-    const reportType = session.step.replace('report_branch_', '');
-    return handleReportBranchSelection(ctx, text, reportType);
-  }
-
-  // ── جریان مدیریت شعبه ──────────────────────────────────────────────────────
-  if (
-    session.step === 'branch_manage' ||
-    session.step === 'branch_add_name' ||
-    session.step === 'branch_add_address'
-  ) {
-    return handleBranchManage(ctx, text);
-  }
-
-  // ── جریان مدیریت ثبت‌ها ────────────────────────────────────────────────────
-  if (session.step === 'records_menu') return handleRecordsMenu(ctx, text);
-  if (session.step && session.step.startsWith('delete_sale_'))    return handleDeleteSaleStep(ctx, text);
-  if (session.step && session.step.startsWith('delete_expense_')) return handleDeleteExpenseStep(ctx, text);
-  if (session.step && session.step.startsWith('edit_sale_'))      return handleEditSaleStep(ctx, text);
-  if (session.step && session.step.startsWith('edit_expense_'))   return handleEditExpenseStep(ctx, text);
-
-  // ── تنظیمات و خروجی ────────────────────────────────────────────────────────
-  if (session.step === 'settings_menu') return handleSettingsMenu(ctx, text);
-  if (session.step === 'export_menu')   return handleExportMenuChoice(ctx, text);
-
-  // fallback
-  clearSession(userId);
-  return ctx.reply(MSG.mainMenu, KB.mainMenu);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// /id — آیدی تلگرام (برای همه کاربران)
+// مدیریت لایسنس (فقط super_admin)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function handleId(ctx) {
-  const id = ctx.from?.id;
-  return ctx.reply(MSG.yourId(id), { parse_mode: 'Markdown' });
+async function startLicenseManagement(ctx) {
+  const session = getSession(ctx.from.id);
+  if (!isSuperAdmin(ctx)) {
+    return ctx.reply(MSG.permissionDenied, getMenu(session));
+  }
+  session.step = 'license_menu';
+  session.data = {};
+  return ctx.reply(MSG.licenseMenu, { parse_mode: 'Markdown', ...KB.licenseMenuKeyboard() });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// /health — وضعیت سیستم (فقط OWNER)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-async function handleHealth(ctx) {
-  const dbOk = await checkConnection();
-  const now = new Date();
-  // زمان UTC
-  const serverTime = now.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
-
-  const data = {
-    botStatus:   '✅ فعال',
-    dbStatus:    dbOk ? '✅ برقرار' : '❌ خطا',
-    serverTime,
-    environment: process.env.NODE_ENV || 'development',
-  };
-  return ctx.reply(MSG.healthStatus(data), { parse_mode: 'Markdown' });
+async function handleLicenseMenu(ctx, text) {
+  if (text === '➕ ایجاد لایسنس جدید') {
+    const license = await createLicense();
+    const session = getSession(ctx.from.id);
+    clearSession(ctx.from.id);
+    return ctx.reply(MSG.licenseCreated(license.code), {
+      parse_mode: 'Markdown',
+      ...getMenu(getSession(ctx.from.id)),
+    });
+  }
+  if (text === '📋 لیست لایسنس‌ها') {
+    const licenses = await getAllLicenses();
+    return ctx.reply(MSG.licenseList(licenses), {
+      parse_mode: 'Markdown',
+      ...KB.licenseMenuKeyboard(),
+    });
+  }
+  return ctx.reply(MSG.licenseMenu, { parse_mode: 'Markdown', ...KB.licenseMenuKeyboard() });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1075,18 +1289,175 @@ async function handleHealth(ctx) {
 
 async function startSettings(ctx) {
   const session = getSession(ctx.from.id);
-  session.step = 'settings_menu';
-  session.data = {};
-  return ctx.reply(MSG.settings, { parse_mode: 'Markdown', ...KB.settingsKeyboard() });
+  const biz = session.biz;
+  if (!hasPermission(biz, 'settings.manage')) {
+    // حسابدار می‌تواند فقط خروجی بگیرد، نه تنظیمات کامل
+    if (hasPermission(biz, 'exports.create')) {
+      session.step = 'settings_menu';
+      return ctx.reply(MSG.settings, { parse_mode: 'Markdown', ...KB.settingsKeyboardSimple() });
+    }
+    return ctx.reply(MSG.permissionDenied, getMenu(session));
+  }
+  return checkSectionPin(ctx, 'settings', () => {
+    session.step = 'settings_menu';
+    return ctx.reply(MSG.settings, { parse_mode: 'Markdown', ...KB.settingsKeyboard() });
+  });
 }
 
 async function handleSettingsMenu(ctx, text) {
-  if (text === '📤 خروجی اطلاعات') {
-    const session = getSession(ctx.from.id);
+  if (text === '📤 خروجی اطلاعات') return startExportMenu(ctx);
+  if (text === '🔒 قفل بخش‌ها')    return startLockSettings(ctx);
+  return ctx.reply(MSG.settings, { parse_mode: 'Markdown', ...KB.settingsKeyboard() });
+}
+
+// ─── شروع منوی خروجی ─────────────────────────────────────────────────────────
+async function startExportMenu(ctx) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  if (!hasPermission(biz, 'exports.create')) {
+    return ctx.reply(MSG.permissionDenied, getMenu(session));
+  }
+  return checkSectionPin(ctx, 'exports', () => {
     session.step = 'export_menu';
     return ctx.reply(MSG.exportMenu, { parse_mode: 'Markdown', ...KB.exportMenuKeyboard() });
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// قفل بخش‌ها
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function startLockSettings(ctx) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  if (!hasPermission(biz, 'settings.manage')) {
+    return ctx.reply(MSG.permissionDenied, getMenu(session));
   }
-  return ctx.reply(MSG.settings, { parse_mode: 'Markdown', ...KB.settingsKeyboard() });
+  const lockedSections = await getSectionLocks(biz.businessId);
+  session.step = 'lock_menu';
+  session.data = { lockedSections };
+  return ctx.reply(
+    MSG.lockMenu(lockedSections),
+    { parse_mode: 'Markdown', ...KB.lockSectionKeyboard(lockedSections) }
+  );
+}
+
+async function handleLockMenu(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+
+  // نام بخش از دکمه (🔒 گزارش‌ها یا 🔓 گزارش‌ها)
+  const SECTION_LABELS_MAP = {
+    'گزارش‌ها':        'reports',
+    'خروجی':          'exports',
+    'مدیریت ثبت‌ها':   'manage_records',
+    'تنظیمات':        'settings',
+    'ثبت خرج':        'expenses',
+  };
+  const cleanText = text.replace(/^[🔒🔓]\s*/, '');
+  const sectionKey = SECTION_LABELS_MAP[cleanText];
+
+  if (!sectionKey) {
+    const lockedSections = await getSectionLocks(biz.businessId);
+    return ctx.reply(
+      MSG.lockMenu(lockedSections),
+      { parse_mode: 'Markdown', ...KB.lockSectionKeyboard(lockedSections) }
+    );
+  }
+
+  const lock = await getSectionLock(biz.businessId, sectionKey);
+  session.data.pendingLockSection = sectionKey;
+
+  if (lock) {
+    // قفل دارد — درخواست PIN فعلی برای برداشتن
+    session.step = 'lock_remove_verify';
+    return ctx.reply(MSG.askCurrentPinToRemove, KB.cancelKeyboard);
+  } else {
+    // قفل ندارد — تنظیم PIN جدید
+    session.step = 'lock_pin_set';
+    return ctx.reply(MSG.askNewPin, KB.cancelKeyboard);
+  }
+}
+
+async function handleLockPinStep(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const { step, data } = session;
+  const biz = session.biz;
+
+  if (step === 'lock_pin_set') {
+    if (!/^\d{4,6}$/.test(text)) {
+      return ctx.reply(MSG.askNewPin, KB.cancelKeyboard);
+    }
+    data.newPin  = text;
+    session.step = 'lock_pin_confirm';
+    return ctx.reply(MSG.confirmNewPin, KB.cancelKeyboard);
+  }
+
+  if (step === 'lock_pin_confirm') {
+    if (text !== data.newPin) {
+      data.newPin  = null;
+      session.step = 'lock_pin_set';
+      return ctx.reply(MSG.pinMismatch, KB.cancelKeyboard);
+    }
+    const sectionKey = data.pendingLockSection;
+    await setSectionLock(biz.businessId, sectionKey, data.newPin);
+    clearSession(ctx.from.id);
+    const sLabel = SECTION_LABELS[sectionKey] || sectionKey;
+    return ctx.reply(MSG.pinSet(sLabel), getMenu(getSession(ctx.from.id)));
+  }
+
+  if (step === 'lock_remove_verify') {
+    const sectionKey = data.pendingLockSection;
+    const lock = await getSectionLock(biz.businessId, sectionKey);
+    if (!lock || verifyPin(biz.businessId, sectionKey, text, lock.pin_hash)) {
+      await removeSectionLock(biz.businessId, sectionKey);
+      clearSession(ctx.from.id);
+      const sLabel = SECTION_LABELS[sectionKey] || sectionKey;
+      return ctx.reply(MSG.pinRemoved(sLabel), getMenu(getSession(ctx.from.id)));
+    }
+    clearSession(ctx.from.id);
+    return ctx.reply(MSG.pinWrong + '\nعملیات لغو شد.', getMenu(getSession(ctx.from.id)));
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// تأیید PIN برای ورود به بخش قفل‌شده
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function handlePinVerify(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  const { pendingSection } = session.data;
+
+  if (!/^\d{4,6}$/.test(text)) {
+    return ctx.reply(MSG.pinWrong, KB.cancelKeyboard);
+  }
+
+  const lock = await getSectionLock(biz.businessId, pendingSection);
+  if (!lock) {
+    // قفل برداشته شده — ادامه بده
+    session.pinUnlocked = session.pinUnlocked || {};
+    session.pinUnlocked[pendingSection] = true;
+    session.data.pendingSection = null;
+    session.step = null;
+    return navigateToSection(ctx, pendingSection);
+  }
+
+  if (verifyPin(biz.businessId, pendingSection, text, lock.pin_hash)) {
+    session.pinUnlocked = session.pinUnlocked || {};
+    session.pinUnlocked[pendingSection] = true;
+    session.data.pendingSection = null;
+    session.step = null;
+    return navigateToSection(ctx, pendingSection);
+  }
+
+  // رمز اشتباه
+  session.data.pinAttempts = (session.data.pinAttempts || 0) + 1;
+  if (session.data.pinAttempts >= 3) {
+    clearSession(ctx.from.id);
+    return ctx.reply(MSG.pinMaxAttempts, getMenu(getSession(ctx.from.id)));
+  }
+  return ctx.reply(MSG.pinWrong, KB.cancelKeyboard);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1096,17 +1467,15 @@ async function handleSettingsMenu(ctx, text) {
 async function handleExportMenuChoice(ctx, text) {
   if (text === '📊 خروجی فروش‌ها') return handleSalesCsvExport(ctx);
   if (text === '💰 خروجی مخارج')   return handleExpensesCsvExport(ctx);
-  // ورودی نامعتبر: منو را دوباره نشان بده
   return ctx.reply(MSG.exportMenu, { parse_mode: 'Markdown', ...KB.exportMenuKeyboard() });
 }
 
 async function handleSalesCsvExport(ctx) {
+  const session = getSession(ctx.from.id);
   await ctx.reply(MSG.exportGenerating);
-  const rows = await getAllSalesForExport();
-  if (rows.length === 0) {
-    return ctx.reply(MSG.exportEmptySales);
-  }
-  const csv = '﻿' + buildSalesCsv(rows); // BOM برای نمایش صحیح در Excel
+  const rows = await getAllSalesForExport(session.biz?.businessId);
+  if (rows.length === 0) return ctx.reply(MSG.exportEmptySales);
+  const csv = '﻿' + buildSalesCsv(rows);
   const tmpPath = path.join(os.tmpdir(), `icebox_sales_${Date.now()}.csv`);
   fs.writeFileSync(tmpPath, csv, 'utf8');
   try {
@@ -1120,11 +1489,10 @@ async function handleSalesCsvExport(ctx) {
 }
 
 async function handleExpensesCsvExport(ctx) {
+  const session = getSession(ctx.from.id);
   await ctx.reply(MSG.exportGenerating);
-  const rows = await getAllExpensesForExport();
-  if (rows.length === 0) {
-    return ctx.reply(MSG.exportEmptyExpenses);
-  }
+  const rows = await getAllExpensesForExport(session.biz?.businessId);
+  if (rows.length === 0) return ctx.reply(MSG.exportEmptyExpenses);
   const csv = '﻿' + buildExpensesCsv(rows);
   const tmpPath = path.join(os.tmpdir(), `icebox_expenses_${Date.now()}.csv`);
   fs.writeFileSync(tmpPath, csv, 'utf8');
@@ -1138,12 +1506,164 @@ async function handleExpensesCsvExport(ctx) {
   }
 }
 
-// ─── دستور /export (ورودی مستقیم) ────────────────────────────────────────────
-async function handleExportCommand(ctx) {
-  const session = getSession(ctx.from.id);
-  session.step = 'export_menu';
-  session.data = {};
-  return ctx.reply(MSG.exportMenu, { parse_mode: 'Markdown', ...KB.exportMenuKeyboard() });
+// ═══════════════════════════════════════════════════════════════════════════════
+// روتر اصلی پیام‌های متنی
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function handleText(ctx) {
+  const text   = ctx.message.text;
+  const userId = ctx.from.id;
+  const session = getSession(userId);
+
+  // ── جریان ثبت‌نام (کاربر بدون کسب‌وکار) ──────────────────────────────────
+  if (!session.biz && !isSuperAdmin(ctx)) {
+    if (text === '❌ لغو' || text === '🏠 منوی اصلی') {
+      session.step = 'register_license';
+      return ctx.reply(MSG.licensePrompt, KB.cancelKeyboard);
+    }
+    if (session.step && session.step.startsWith('register_')) {
+      return handleRegistrationStep(ctx, text);
+    }
+    session.step = 'register_license';
+    return ctx.reply(MSG.licensePrompt, KB.cancelKeyboard);
+  }
+
+  // ── لغو از هر جای ربات ────────────────────────────────────────────────────
+  if (text === '❌ لغو' || text === '🔙 بازگشت' || text === '🏠 منوی اصلی') {
+    clearSession(userId);
+    return ctx.reply(MSG.mainMenu, getMenu(getSession(userId)));
+  }
+
+  // ── تأیید PIN ──────────────────────────────────────────────────────────────
+  if (session.step === 'pin_verify') {
+    return handlePinVerify(ctx, text);
+  }
+
+  // ── قفل بخش‌ها ────────────────────────────────────────────────────────────
+  if (session.step === 'lock_pin_set' ||
+      session.step === 'lock_pin_confirm' ||
+      session.step === 'lock_remove_verify') {
+    return handleLockPinStep(ctx, text);
+  }
+
+  // ── منوی اصلی (step=null) ──────────────────────────────────────────────────
+  if (!session.step) {
+    if (text === '💰 ثبت فروش امروز')  return startSaleFlow(ctx);
+    if (text === '🧾 ثبت خرج')         return startExpenseFlow(ctx);
+    if (text === '📊 گزارش‌ها')         return startReportsMenu(ctx);
+    if (text === '🏪 مدیریت شعبه‌ها')   return startBranchManagement(ctx);
+    if (text === '🗂️ مدیریت ثبت‌ها')   return startManageRecords(ctx);
+    if (text === '➕ افزودن شعبه')      return startQuickAddBranch(ctx);
+    if (text === '👥 مدیریت تیم')       return startTeamManagement(ctx);
+    if (text === '🔑 مجوزها')           return startLicenseManagement(ctx);
+    if (text === '⚙️ تنظیمات')          return startSettings(ctx);
+    if (text === '❓ راهنما') {
+      return ctx.reply(MSG.help, { parse_mode: 'Markdown', ...getMenu(session) });
+    }
+    return ctx.reply(MSG.mainMenu, getMenu(session));
+  }
+
+  // ── جریان فروش ────────────────────────────────────────────────────────────
+  if (session.step === 'sale_branch')                      return handleSaleBranch(ctx, text);
+  if (session.step && session.step.startsWith('sale_'))    return handleSaleStep(ctx, text);
+
+  // ── جریان خرج ─────────────────────────────────────────────────────────────
+  if (session.step === 'expense_branch')                   return handleExpenseBranch(ctx, text);
+  if (session.step && session.step.startsWith('expense_')) return handleExpenseStep(ctx, text);
+
+  // ── منوی گزارش‌ها ──────────────────────────────────────────────────────────
+  if (session.step === 'reports_menu')         return handleReportsMenu(ctx, text);
+  if (session.step === 'compare_period')       return handleComparePeriod(ctx, text);
+  if (session.step === 'datepick_month')       return handleDatepickMonth(ctx, text);
+  if (session.step === 'datepick_day')         return handleDatepickDay(ctx, text);
+  if (session.step === 'custom_scope')         return handleCustomScope(ctx, text);
+  if (session.step === 'custom_branch')        return handleCustomBranch(ctx, text);
+  if (session.step === 'branch_report_select') return handleBranchReportSelect(ctx, text);
+  if (session.step === 'branch_report_period') return handleBranchReportPeriod(ctx, text);
+
+  if (session.step && session.step.startsWith('report_type_')) {
+    return handleReportTypeSelection(ctx, text);
+  }
+  if (session.step && session.step.startsWith('report_branch_')) {
+    const reportType = session.step.replace('report_branch_', '');
+    return handleReportBranchSelection(ctx, text, reportType);
+  }
+
+  // ── مدیریت شعبه ───────────────────────────────────────────────────────────
+  if (session.step === 'branch_manage' ||
+      session.step === 'branch_add_name' ||
+      session.step === 'branch_add_address') {
+    return handleBranchManage(ctx, text);
+  }
+
+  // ── مدیریت ثبت‌ها ──────────────────────────────────────────────────────────
+  if (session.step === 'records_menu')                              return handleRecordsMenu(ctx, text);
+  if (session.step && session.step.startsWith('delete_sale_'))      return handleDeleteSaleStep(ctx, text);
+  if (session.step && session.step.startsWith('delete_expense_'))   return handleDeleteExpenseStep(ctx, text);
+  if (session.step && session.step.startsWith('edit_sale_'))        return handleEditSaleStep(ctx, text);
+  if (session.step && session.step.startsWith('edit_expense_'))     return handleEditExpenseStep(ctx, text);
+
+  // ── تنظیمات و خروجی ────────────────────────────────────────────────────────
+  if (session.step === 'settings_menu') return handleSettingsMenu(ctx, text);
+  if (session.step === 'export_menu')   return handleExportMenuChoice(ctx, text);
+  if (session.step === 'lock_menu')     return handleLockMenu(ctx, text);
+
+  // ── مدیریت تیم ─────────────────────────────────────────────────────────────
+  if (session.step === 'team_menu') return handleTeamMenu(ctx, text);
+  if (session.step && session.step.startsWith('team_')) return handleTeamStep(ctx, text);
+
+  // ── مدیریت لایسنس ──────────────────────────────────────────────────────────
+  if (session.step === 'license_menu') return handleLicenseMenu(ctx, text);
+
+  // ── ثبت‌نام ─────────────────────────────────────────────────────────────────
+  if (session.step && session.step.startsWith('register_')) {
+    return handleRegistrationStep(ctx, text);
+  }
+
+  // fallback
+  clearSession(userId);
+  return ctx.reply(MSG.mainMenu, getMenu(getSession(userId)));
 }
 
-module.exports = { handleStart, handleText, handleId, handleHealth, handleExportCommand };
+// ═══════════════════════════════════════════════════════════════════════════════
+// دستورات ثابت
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function handleId(ctx) {
+  return ctx.reply(MSG.yourId(ctx.from?.id), { parse_mode: 'Markdown' });
+}
+
+async function handleHealth(ctx) {
+  const dbOk = await checkConnection();
+  const now  = new Date();
+  return ctx.reply(MSG.healthStatus({
+    botStatus:   '✅ فعال',
+    dbStatus:    dbOk ? '✅ برقرار' : '❌ خطا',
+    serverTime:  now.toISOString().replace('T', ' ').slice(0, 19) + ' UTC',
+    environment: process.env.NODE_ENV || 'development',
+  }), { parse_mode: 'Markdown' });
+}
+
+async function handleExportCommand(ctx) {
+  return startExportMenu(ctx);
+}
+
+// ─── برای کاربران فاقد کسب‌وکار (استفاده از index.js) ───────────────────────
+async function handleUnregistered(ctx) {
+  const session = getSession(ctx.from.id);
+  if (session.step && session.step.startsWith('register_')) {
+    // در جریان ثبت‌نام هستند — ادامه دهند
+    return handleText(ctx);
+  }
+  session.step = 'register_license';
+  return ctx.reply(MSG.licensePrompt, KB.cancelKeyboard);
+}
+
+module.exports = {
+  handleStart,
+  handleText,
+  handleId,
+  handleHealth,
+  handleExportCommand,
+  handleUnregistered,
+};
