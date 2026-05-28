@@ -1713,6 +1713,7 @@ async function handleText(ctx) {
     if (text === '👥 مدیریت تیم')       return startTeamManagement(ctx);
     if (text === '🔑 مجوزها')           return startLicenseManagement(ctx);
     if (text === '⚙️ تنظیمات')          return startSettings(ctx);
+    if (text === '📤 خروجی اطلاعات')   return startExportMenu(ctx);
     if (text === '❓ راهنما') {
       return ctx.reply(MSG.help, { parse_mode: 'Markdown', ...getMenu(session) });
     }

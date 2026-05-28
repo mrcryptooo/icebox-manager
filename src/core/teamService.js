@@ -5,19 +5,16 @@ const { query } = require('../db/database');
 const DEFAULT_PERMISSIONS = {
   business_owner: ['*'],
   manager: [
-    'sales.create', 'sales.view', 'sales.edit', 'sales.delete',
-    'expenses.create', 'expenses.view', 'expenses.edit', 'expenses.delete',
-    'reports.view', 'exports.create', 'branches.manage', 'manage_records.view',
-    'team.manage',
+    'sales.create', 'sales.view', 'sales.edit',
+    'expenses.create', 'expenses.view',
+    'reports.view', 'manage_records.view',
   ],
   staff: [
-    'sales.create', 'sales.view',
-    'expenses.create', 'expenses.view',
-    'reports.view',
+    'sales.create',
   ],
   accountant: [
-    'sales.view', 'expenses.view', 'expenses.create',
-    'reports.view', 'exports.create', 'manage_records.view',
+    'sales.view', 'expenses.view',
+    'reports.view', 'exports.create',
   ],
 };
 
