@@ -37,7 +37,8 @@ const {
 const { createBusiness, getDefaultBusiness, ensureDefaultBusiness } = require('../../core/businessService');
 const { createLicense, getLicenseByCode, getAllLicenses, activateLicense } = require('../../core/licenseService');
 const {
-  addTeamMember, getTeamMembers, updateMemberRole, deactivateMember,
+  addTeamMember, getTeamMembers, getAllTeamMembers,
+  updateMemberRole, deactivateMember, activateMember,
   DEFAULT_PERMISSIONS, ROLE_LABELS,
 } = require('../../core/teamService');
 const {
@@ -62,7 +63,13 @@ const EXPENSE_VALID_CATEGORIES = [
   'تعمیرات', 'تبلیغات', 'پیک و ارسال', 'سایر',
 ];
 
-const ROLE_MAP = { 'مدیر': 'manager', 'کارمند': 'staff', 'حسابدار': 'accountant' };
+const ROLE_MAP = { 'سرپرست': 'manager', 'کارمند': 'staff', 'حسابدار': 'accountant' };
+
+// ─── emoji اعداد برای لیست اعضا ─────────────────────────────────────────────
+const MEMBER_EMOJIS = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+function parseMemberIndex(text) {
+  return MEMBER_EMOJIS.findIndex(e => text.startsWith(e));
+}
 
 // ─── ابزارها ──────────────────────────────────────────────────────────────────
 function parseNumber(text) {
@@ -1138,114 +1145,185 @@ async function startTeamManagement(ctx) {
 
 async function handleTeamMenu(ctx, text) {
   const session = getSession(ctx.from.id);
-  const biz = session.biz;
-
-  if (text === '📋 لیست اعضا') {
-    const members = await getTeamMembers(biz.businessId);
-    return ctx.reply(MSG.teamList(members), KB.teamMenuKeyboard());
-  }
 
   if (text === '➕ افزودن عضو') {
     session.step = 'team_add_tgid';
     return ctx.reply(MSG.askMemberTelegramId, KB.cancelKeyboard);
   }
-  if (text === '🔄 تغییر نقش') {
-    session.step = 'team_change_tgid';
-    return ctx.reply(MSG.askMemberTelegramIdForChange, KB.cancelKeyboard);
-  }
-  if (text === '🚫 غیرفعال کردن') {
-    session.step = 'team_deactivate_tgid';
-    return ctx.reply(MSG.askMemberTelegramIdForDeactivate, KB.cancelKeyboard);
+  if (text === '📋 لیست اعضا') {
+    return startMemberList(ctx);
   }
 
   return ctx.reply(MSG.teamMenu, KB.teamMenuKeyboard());
 }
 
+// ─── لیست اعضا برای مدیریت ───────────────────────────────────────────────────
+async function startMemberList(ctx) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  const members = await getAllTeamMembers(biz.businessId);
+
+  if (members.length === 0) {
+    session.step = 'team_menu';
+    return ctx.reply(MSG.noTeamMembers, KB.teamMenuKeyboard());
+  }
+
+  session.data.teamMembers = members;
+  session.step = 'team_member_select';
+  return ctx.reply(MSG.selectMember, KB.memberSelectKeyboard(members));
+}
+
+// ─── انتخاب عضو از لیست ──────────────────────────────────────────────────────
+async function handleMemberSelect(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const members = session.data.teamMembers || [];
+
+  const idx = parseMemberIndex(text);
+  if (idx < 0 || idx >= members.length) {
+    return ctx.reply(MSG.selectMember, KB.memberSelectKeyboard(members));
+  }
+
+  const member = members[idx];
+  session.data.selectedMember = member;
+  session.step = 'team_member_action';
+
+  const displayName = member.display_name || member.name || `کاربر ${member.telegram_id}`;
+  const roleLabel   = ROLE_LABELS[member.role] || member.role;
+  const isActive    = member.is_active === 1 || member.is_active === true;
+
+  return ctx.reply(
+    MSG.memberAction(displayName, roleLabel, isActive),
+    { parse_mode: 'Markdown', ...KB.memberActionKeyboard(isActive) }
+  );
+}
+
+// ─── عملیات روی عضو انتخاب‌شده ───────────────────────────────────────────────
+async function handleMemberAction(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  const { selectedMember } = session.data;
+
+  if (!selectedMember) return startMemberList(ctx);
+
+  const displayName = selectedMember.display_name || selectedMember.name || '—';
+  const isActive    = selectedMember.is_active === 1 || selectedMember.is_active === true;
+
+  if (text === '🔄 تغییر نقش') {
+    session.step = 'team_member_change_role';
+    return ctx.reply(MSG.selectRole, KB.roleSelectKeyboard());
+  }
+
+  if (text === '🚫 غیرفعال کردن عضو') {
+    await deactivateMember(biz.businessId, selectedMember.user_id);
+    clearSession(ctx.from.id);
+    return ctx.reply(MSG.memberDeactivated(displayName), getMenu(getSession(ctx.from.id)));
+  }
+
+  if (text === '✅ فعال کردن عضو') {
+    await activateMember(biz.businessId, selectedMember.user_id);
+    clearSession(ctx.from.id);
+    return ctx.reply(MSG.memberActivated(displayName), getMenu(getSession(ctx.from.id)));
+  }
+
+  if (text === '👁 دیدن دسترسی‌ها') {
+    const perms = Array.isArray(selectedMember.permissions) ? selectedMember.permissions : [];
+    const roleLabel = ROLE_LABELS[selectedMember.role] || selectedMember.role;
+    return ctx.reply(
+      MSG.memberPermissionsList(displayName, perms),
+      { parse_mode: 'Markdown', ...KB.memberActionKeyboard(isActive) }
+    );
+  }
+
+  if (text === '🔙 بازگشت به لیست') {
+    return startMemberList(ctx);
+  }
+
+  // fallback — نمایش مجدد منوی عضو
+  const roleLabel = ROLE_LABELS[selectedMember.role] || selectedMember.role;
+  return ctx.reply(
+    MSG.memberAction(displayName, roleLabel, isActive),
+    { parse_mode: 'Markdown', ...KB.memberActionKeyboard(isActive) }
+  );
+}
+
+// ─── مراحل افزودن عضو و تغییر نقش از طریق لیست ──────────────────────────────
 async function handleTeamStep(ctx, text) {
   const session = getSession(ctx.from.id);
   const { step, data } = session;
   const biz = session.biz;
 
-  // ── افزودن عضو ──────────────────────────────────────────────────────────────
+  // ── افزودن عضو — مرحله آیدی تلگرام ─────────────────────────────────────────
   if (step === 'team_add_tgid') {
     const tgId = parseId(text);
-    if (!tgId) return ctx.reply(MSG.invalidId, KB.cancelKeyboard);
+    if (!tgId) return ctx.reply(MSG.memberNotFound, KB.cancelKeyboard);
     const member = await getUserByTelegramId(tgId);
     if (!member) return ctx.reply(MSG.memberNotFound, KB.cancelKeyboard);
-    data.memberUserId    = member.id;
-    data.memberName      = member.name;
+    data.memberUserId     = member.id;
+    data.memberName       = member.name;
     data.memberTelegramId = tgId;
+    session.step = 'team_add_real_name';
+    return ctx.reply(MSG.askRealName, KB.cancelKeyboard);
+  }
+
+  // ── افزودن عضو — مرحله نام واقعی ────────────────────────────────────────────
+  if (step === 'team_add_real_name') {
+    const realName = text.trim();
+    if (!realName || realName.length < 2) {
+      return ctx.reply(MSG.askRealName, KB.cancelKeyboard);
+    }
+    data.memberDisplayName = realName;
     session.step = 'team_add_role';
     return ctx.reply(MSG.selectRole, KB.roleSelectKeyboard());
   }
 
+  // ── افزودن عضو — مرحله نقش ──────────────────────────────────────────────────
   if (step === 'team_add_role') {
     const role = ROLE_MAP[text];
     if (!role) return ctx.reply(MSG.selectRole, KB.roleSelectKeyboard());
-    await addTeamMember({ businessId: biz.businessId, userId: data.memberUserId, role });
-    const roleLabel = ROLE_LABELS[role] || role;
+
+    // بررسی وجود قبلی عضو
+    const allMembers = await getAllTeamMembers(biz.businessId);
+    const alreadyMember = allMembers.some(m => m.user_id === data.memberUserId);
+
+    await addTeamMember({
+      businessId:  biz.businessId,
+      userId:      data.memberUserId,
+      role,
+      displayName: data.memberDisplayName,
+    });
+    const roleLabel   = ROLE_LABELS[role] || role;
+    const displayName = data.memberDisplayName || data.memberName || '—';
     clearSession(ctx.from.id);
+
+    if (alreadyMember) {
+      return ctx.reply(
+        MSG.memberAlreadyInTeam({ displayName, roleLabel }),
+        { parse_mode: 'Markdown', ...getMenu(getSession(ctx.from.id)) }
+      );
+    }
     return ctx.reply(
-      MSG.memberAdded(data.memberName, role, roleLabel),
-      getMenu(getSession(ctx.from.id))
+      MSG.memberAddedDetailed({ displayName, roleLabel, telegramId: data.memberTelegramId }),
+      { parse_mode: 'Markdown', ...getMenu(getSession(ctx.from.id)) }
     );
   }
 
-  // ── تغییر نقش ────────────────────────────────────────────────────────────────
-  if (step === 'team_change_tgid') {
-    const tgId = parseId(text);
-    if (!tgId) return ctx.reply(MSG.invalidId, KB.cancelKeyboard);
-    const member = await getUserByTelegramId(tgId);
-    if (!member) return ctx.reply(MSG.memberNotFound, KB.cancelKeyboard);
-    const teamMembers = await getTeamMembers(biz.businessId);
-    const isMember = teamMembers.some(m => m.telegram_id === Number(tgId));
-    if (!isMember) return ctx.reply(MSG.memberNotInTeam, KB.cancelKeyboard);
-    data.memberUserId    = member.id;
-    data.memberName      = member.name;
-    session.step = 'team_change_role';
-    return ctx.reply(MSG.selectRole, KB.roleSelectKeyboard());
-  }
-
-  if (step === 'team_change_role') {
+  // ── تغییر نقش از طریق لیست ──────────────────────────────────────────────────
+  if (step === 'team_member_change_role') {
     const role = ROLE_MAP[text];
     if (!role) return ctx.reply(MSG.selectRole, KB.roleSelectKeyboard());
-    await updateMemberRole(biz.businessId, data.memberUserId, role);
-    const roleLabel = ROLE_LABELS[role] || role;
+    const member      = data.selectedMember;
+    if (!member) {
+      clearSession(ctx.from.id);
+      return ctx.reply(MSG.mainMenu, getMenu(getSession(ctx.from.id)));
+    }
+    await updateMemberRole(biz.businessId, member.user_id, role);
+    const roleLabel   = ROLE_LABELS[role] || role;
+    const displayName = member.display_name || member.name || '—';
     clearSession(ctx.from.id);
     return ctx.reply(
-      MSG.memberRoleChanged(data.memberName, roleLabel),
+      MSG.memberRoleChanged(displayName, roleLabel),
       getMenu(getSession(ctx.from.id))
     );
-  }
-
-  // ── غیرفعال کردن ─────────────────────────────────────────────────────────────
-  if (step === 'team_deactivate_tgid') {
-    const tgId = parseId(text);
-    if (!tgId) return ctx.reply(MSG.invalidId, KB.cancelKeyboard);
-    const member = await getUserByTelegramId(tgId);
-    if (!member) return ctx.reply(MSG.memberNotFound, KB.cancelKeyboard);
-    const teamMembers = await getTeamMembers(biz.businessId);
-    const isMember = teamMembers.some(m => m.telegram_id === Number(tgId));
-    if (!isMember) return ctx.reply(MSG.memberNotInTeam, KB.cancelKeyboard);
-    data.memberUserId = member.id;
-    data.memberName   = member.name;
-    data.memberTelegramId = tgId;
-    session.step = 'team_deactivate_confirm';
-    return ctx.reply(
-      MSG.confirmDeactivateMember(member.name, tgId),
-      KB.confirmYesNoKeyboard()
-    );
-  }
-
-  if (step === 'team_deactivate_confirm') {
-    if (text === '✅ بله، مطمئنم') {
-      await deactivateMember(biz.businessId, data.memberUserId);
-      const name = data.memberName;
-      clearSession(ctx.from.id);
-      return ctx.reply(MSG.memberDeactivated(name), getMenu(getSession(ctx.from.id)));
-    }
-    clearSession(ctx.from.id);
-    return ctx.reply(MSG.cancelled, getMenu(getSession(ctx.from.id)));
   }
 }
 
@@ -1367,16 +1445,47 @@ async function handleLockMenu(ctx, text) {
 
   const lock = await getSectionLock(biz.businessId, sectionKey);
   session.data.pendingLockSection = sectionKey;
+  session.data.lockHasLock        = !!lock;
+  session.step = 'lock_section_action';
+  const sLabel = SECTION_LABELS[sectionKey] || sectionKey;
+  return ctx.reply(
+    MSG.lockSectionAction(sLabel, !!lock),
+    KB.lockSectionActionKeyboard(!!lock)
+  );
+}
 
-  if (lock) {
-    // قفل دارد — درخواست PIN فعلی برای برداشتن
-    session.step = 'lock_remove_verify';
-    return ctx.reply(MSG.askCurrentPinToRemove, KB.cancelKeyboard);
-  } else {
-    // قفل ندارد — تنظیم PIN جدید
+async function handleLockSectionAction(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const { pendingLockSection } = session.data;
+
+  if (text === '🔐 فعال کردن قفل') {
+    session.data.isChangingPin = false;
     session.step = 'lock_pin_set';
     return ctx.reply(MSG.askNewPin, KB.cancelKeyboard);
   }
+
+  if (text === '🔓 غیرفعال کردن قفل') {
+    session.step = 'lock_remove_verify';
+    return ctx.reply(MSG.askCurrentPinToRemove, KB.cancelKeyboard);
+  }
+
+  if (text === '🔑 تغییر رمز') {
+    session.step = 'lock_change_verify';
+    return ctx.reply(MSG.askCurrentPinToChange, KB.cancelKeyboard);
+  }
+
+  // fallback — نمایش مجدد منوی عملیات
+  const biz    = session.biz;
+  const lock   = pendingLockSection
+    ? await getSectionLock(biz.businessId, pendingLockSection)
+    : null;
+  const sLabel = pendingLockSection
+    ? (SECTION_LABELS[pendingLockSection] || pendingLockSection)
+    : '';
+  return ctx.reply(
+    MSG.lockSectionAction(sLabel, !!lock),
+    KB.lockSectionActionKeyboard(!!lock)
+  );
 }
 
 async function handleLockPinStep(ctx, text) {
@@ -1384,6 +1493,7 @@ async function handleLockPinStep(ctx, text) {
   const { step, data } = session;
   const biz = session.biz;
 
+  // ── تنظیم رمز جدید ──────────────────────────────────────────────────────────
   if (step === 'lock_pin_set') {
     if (!/^\d{4,6}$/.test(text)) {
       return ctx.reply(MSG.askNewPin, KB.cancelKeyboard);
@@ -1393,6 +1503,7 @@ async function handleLockPinStep(ctx, text) {
     return ctx.reply(MSG.confirmNewPin, KB.cancelKeyboard);
   }
 
+  // ── تأیید رمز جدید ──────────────────────────────────────────────────────────
   if (step === 'lock_pin_confirm') {
     if (text !== data.newPin) {
       data.newPin  = null;
@@ -1401,11 +1512,13 @@ async function handleLockPinStep(ctx, text) {
     }
     const sectionKey = data.pendingLockSection;
     await setSectionLock(biz.businessId, sectionKey, data.newPin);
+    const sLabel     = SECTION_LABELS[sectionKey] || sectionKey;
+    const successMsg = data.isChangingPin ? MSG.pinChanged(sLabel) : MSG.pinEnabled(sLabel);
     clearSession(ctx.from.id);
-    const sLabel = SECTION_LABELS[sectionKey] || sectionKey;
-    return ctx.reply(MSG.pinSet(sLabel), getMenu(getSession(ctx.from.id)));
+    return ctx.reply(successMsg, getMenu(getSession(ctx.from.id)));
   }
 
+  // ── تأیید رمز برای برداشتن قفل ──────────────────────────────────────────────
   if (step === 'lock_remove_verify') {
     const sectionKey = data.pendingLockSection;
     const lock = await getSectionLock(biz.businessId, sectionKey);
@@ -1413,10 +1526,35 @@ async function handleLockPinStep(ctx, text) {
       await removeSectionLock(biz.businessId, sectionKey);
       clearSession(ctx.from.id);
       const sLabel = SECTION_LABELS[sectionKey] || sectionKey;
-      return ctx.reply(MSG.pinRemoved(sLabel), getMenu(getSession(ctx.from.id)));
+      return ctx.reply(MSG.pinDisabled(sLabel), getMenu(getSession(ctx.from.id)));
     }
-    clearSession(ctx.from.id);
-    return ctx.reply(MSG.pinWrong + '\nعملیات لغو شد.', getMenu(getSession(ctx.from.id)));
+    // رمز اشتباه — اجازه تلاش مجدد
+    data.pinAttempts = (data.pinAttempts || 0) + 1;
+    if (data.pinAttempts >= 3) {
+      clearSession(ctx.from.id);
+      return ctx.reply(MSG.pinMaxAttempts, getMenu(getSession(ctx.from.id)));
+    }
+    return ctx.reply(MSG.pinWrong, KB.cancelKeyboard);
+  }
+
+  // ── تأیید رمز برای تغییر رمز ────────────────────────────────────────────────
+  if (step === 'lock_change_verify') {
+    const sectionKey = data.pendingLockSection;
+    const lock = await getSectionLock(biz.businessId, sectionKey);
+    if (!lock || verifyPin(biz.businessId, sectionKey, text, lock.pin_hash)) {
+      // رمز صحیح است — برو به مرحله تنظیم رمز جدید
+      data.isChangingPin = true;
+      data.pinAttempts   = 0;
+      session.step = 'lock_pin_set';
+      return ctx.reply(MSG.askNewPin, KB.cancelKeyboard);
+    }
+    // رمز اشتباه
+    data.pinAttempts = (data.pinAttempts || 0) + 1;
+    if (data.pinAttempts >= 3) {
+      clearSession(ctx.from.id);
+      return ctx.reply(MSG.pinMaxAttempts, getMenu(getSession(ctx.from.id)));
+    }
+    return ctx.reply(MSG.pinWrong, KB.cancelKeyboard);
   }
 }
 
@@ -1540,9 +1678,11 @@ async function handleText(ctx) {
   }
 
   // ── قفل بخش‌ها ────────────────────────────────────────────────────────────
+  if (session.step === 'lock_section_action') return handleLockSectionAction(ctx, text);
   if (session.step === 'lock_pin_set' ||
       session.step === 'lock_pin_confirm' ||
-      session.step === 'lock_remove_verify') {
+      session.step === 'lock_remove_verify' ||
+      session.step === 'lock_change_verify') {
     return handleLockPinStep(ctx, text);
   }
 
@@ -1609,7 +1749,9 @@ async function handleText(ctx) {
   if (session.step === 'lock_menu')     return handleLockMenu(ctx, text);
 
   // ── مدیریت تیم ─────────────────────────────────────────────────────────────
-  if (session.step === 'team_menu') return handleTeamMenu(ctx, text);
+  if (session.step === 'team_menu')          return handleTeamMenu(ctx, text);
+  if (session.step === 'team_member_select') return handleMemberSelect(ctx, text);
+  if (session.step === 'team_member_action') return handleMemberAction(ctx, text);
   if (session.step && session.step.startsWith('team_')) return handleTeamStep(ctx, text);
 
   // ── مدیریت لایسنس ──────────────────────────────────────────────────────────

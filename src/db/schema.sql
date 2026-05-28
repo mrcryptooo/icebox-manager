@@ -100,3 +100,6 @@ CREATE TABLE IF NOT EXISTS section_locks (
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS business_id INTEGER;
 ALTER TABLE sales    ADD COLUMN IF NOT EXISTS business_id INTEGER;
 ALTER TABLE expenses ADD COLUMN IF NOT EXISTS business_id INTEGER;
+
+-- ─── مهاجرت Phase 7 QA: نام واقعی اعضا در تیم ───────────────────────────────
+ALTER TABLE business_users ADD COLUMN IF NOT EXISTS display_name TEXT;

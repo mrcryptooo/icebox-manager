@@ -360,49 +360,86 @@ const MSG = {
   teamMenu: '👥 مدیریت تیم:\nاعضای تیم خود را مدیریت کنید.',
 
   askMemberTelegramId:
-    '🆔 آیدی تلگرام عضو جدید را وارد کنید:\n' +
-    '(کاربر باید ابتدا /start به ربات زده باشد تا در سیستم ثبت شده باشد)',
+    '🆔 آیدی تلگرام عضو جدید را وارد کنید:\n\n' +
+    'عضو باید ابتدا /start به ربات زده باشد.\n' +
+    'برای دریافت آیدی، از عضو بخواهید دستور /id را به ربات بزند.',
+
+  askRealName:
+    '✏️ نام و نام خانوادگی واقعی عضو را وارد کنید:\n' +
+    '(مثال: علی رضایی)\n' +
+    'این نام در لیست تیم نمایش داده می‌شود.',
 
   memberNotFound:
-    '⚠️ کاربری با این آیدی در سیستم ثبت نشده است.\n' +
-    'از عضو بخواهید ابتدا /start به ربات بزند، سپس دوباره تلاش کنید.',
+    '⚠️ کاربری با این آیدی در سیستم ثبت نشده است.\n\n' +
+    'آیدی تلگرام باید عددی باشد.\n' +
+    'از عضو بخواهید دستور /id را بزند و عدد را برای شما بفرستد.',
 
   selectRole: '🎭 نقش عضو را انتخاب کنید:',
 
-  memberAdded: (name, role, roleLabel) =>
-    `✅ کاربر «${name || role}» با نقش «${roleLabel}» به تیم اضافه شد.`,
+  memberAddedDetailed: (data) =>
+    `✅ *عضو جدید با موفقیت اضافه شد*\n\n` +
+    `👤 نام: ${data.displayName}\n` +
+    `🎭 نقش: ${data.roleLabel}\n` +
+    `🆔 آیدی تلگرام: \`${data.telegramId}\``,
 
-  teamList: (members) => {
-    if (members.length === 0) return '👥 هیچ عضوی در تیم ثبت نشده است.';
-    const sep = '─'.repeat(28);
-    const LABELS = { super_admin: 'سوپرادمین', business_owner: 'مالک', manager: 'مدیر', staff: 'کارمند', accountant: 'حسابدار' };
-    const lines = [`👥 لیست اعضای تیم:\n${sep}`];
-    members.forEach((m, i) => {
-      lines.push(
-        `\n${i + 1}. ${m.name || '—'}\n` +
-        `   🆔 آیدی: \`${m.telegram_id}\`\n` +
-        `   🎭 نقش: ${LABELS[m.role] || m.role}`
-      );
-    });
-    lines.push(`\n${sep}`);
+  memberAlreadyInTeam: (data) =>
+    `ℹ️ *این عضو قبلاً در تیم بود. اطلاعات به‌روزرسانی شد.*\n\n` +
+    `👤 نام: ${data.displayName}\n` +
+    `🎭 نقش جدید: ${data.roleLabel}`,
+
+  // ─── سازگاری قدیمی ───────────────────────────────────────────────────────
+  memberAdded: (name, role, roleLabel) =>
+    `✅ «${name || role}» با نقش «${roleLabel}» به تیم اضافه شد.`,
+
+  noTeamMembers:
+    '👥 هنوز هیچ عضوی در تیم ثبت نشده است.\n' +
+    'برای افزودن عضو از «➕ افزودن عضو» استفاده کنید.',
+
+  selectMember: '👤 عضو موردنظر را از لیست انتخاب کنید:',
+
+  memberAction: (name, roleLabel, isActive) =>
+    `👤 *${name}*\n` +
+    `🎭 نقش: ${roleLabel}\n` +
+    `📌 وضعیت: ${isActive ? '✅ فعال' : '🚫 غیرفعال'}\n\n` +
+    `عملیات مورد نظر را انتخاب کنید:`,
+
+  memberPermissionsList: (name, perms) => {
+    const PLBL = {
+      '*': '🔑 دسترسی کامل (همه بخش‌ها)',
+      'sales.create': '✅ ثبت فروش',
+      'sales.view': '👁 مشاهده فروش',
+      'sales.edit': '✏️ ویرایش فروش',
+      'sales.delete': '🗑️ حذف فروش',
+      'expenses.create': '✅ ثبت خرج',
+      'expenses.view': '👁 مشاهده خرج',
+      'expenses.edit': '✏️ ویرایش خرج',
+      'expenses.delete': '🗑️ حذف خرج',
+      'reports.view': '📊 مشاهده گزارش‌ها',
+      'exports.create': '📤 خروجی اطلاعات',
+      'branches.manage': '🏪 مدیریت شعبه‌ها',
+      'manage_records.view': '🗂️ مدیریت ثبت‌ها',
+      'settings.manage': '⚙️ تنظیمات',
+      'team.manage': '👥 مدیریت تیم',
+    };
+    const sep = '─'.repeat(26);
+    const permsArr = Array.isArray(perms) ? perms : [];
+    if (permsArr.length === 0) return `👤 ${name}\n\n⚠️ هیچ دسترسی تعریف نشده است.`;
+    const lines = [`👤 دسترسی‌های *${name}*\n${sep}`];
+    permsArr.forEach(p => lines.push(`• ${PLBL[p] || p}`));
+    lines.push(sep);
     return lines.join('\n');
   },
-
-  askMemberTelegramIdForChange:
-    '🆔 آیدی تلگرام عضوی که می‌خواهید نقشش را تغییر دهید وارد کنید:',
 
   memberRoleChanged: (name, roleLabel) =>
     `✅ نقش «${name || 'عضو'}» به «${roleLabel}» تغییر یافت.`,
 
-  askMemberTelegramIdForDeactivate:
-    '🆔 آیدی تلگرام عضوی که می‌خواهید غیرفعال کنید وارد کنید:',
+  memberDeactivated: (name) => `🚫 دسترسی «${name || 'عضو'}» غیرفعال شد.`,
+  memberActivated: (name) => `✅ دسترسی «${name || 'عضو'}» دوباره فعال شد.`,
+
+  memberNotInTeam: '❌ این کاربر عضو تیم شما نیست.',
 
   confirmDeactivateMember: (name, telegramId) =>
     `⚠️ آیا مطمئن هستید؟\n\nعضو: ${name || '—'}\nآیدی: ${telegramId}\n\nپس از غیرفعال شدن، این کاربر دیگر نمی‌تواند از ربات استفاده کند.`,
-
-  memberDeactivated: (name) => `✅ دسترسی «${name || 'عضو'}» غیرفعال شد.`,
-
-  memberNotInTeam: '❌ این کاربر عضو تیم شما نیست.',
 
   // ─── مدیریت لایسنس (Phase 7 — super_admin) ──────────────────────────────
   licenseMenu:
@@ -438,23 +475,36 @@ const MSG = {
     return lines.join('\n');
   },
 
+  // ─── قفل بخش‌ها ──────────────────────────────────────────────────────────
+  lockSectionAction: (sectionLabel, hasLock) =>
+    `🔒 بخش «${sectionLabel}»\n` +
+    `وضعیت: ${hasLock ? '🔒 قفل فعال است' : '🔓 قفل غیرفعال است'}\n\n` +
+    `عملیات مورد نظر را انتخاب کنید:`,
+
   askNewPin:
     '🔐 رمز جدید را وارد کنید:\n' +
-    '(۴ تا ۶ رقم — فقط عدد)',
+    '(۴ تا ۶ رقم عددی — مثال: 1234)',
 
-  confirmNewPin:  '🔐 رمز را دوباره وارد کنید تا تأیید شود:',
-  pinMismatch:    '⚠️ دو رمز وارد‌شده یکسان نیستند. دوباره از ابتدا تلاش کنید:',
-  pinSet: (section) => `✅ قفل بخش «${section}» با موفقیت تنظیم شد.`,
-  pinRemoved: (section) => `🔓 قفل بخش «${section}» برداشته شد.`,
+  askCurrentPinToRemove: '🔐 رمز فعلی را وارد کنید تا قفل برداشته شود:',
+  askCurrentPinToChange: '🔐 ابتدا رمز فعلی را وارد کنید:',
+
+  confirmNewPin: '🔐 رمز را دوباره وارد کنید تا تأیید شود:',
+  pinMismatch:   '⚠️ دو رمز وارد‌شده یکسان نیستند. دوباره از ابتدا تلاش کنید:',
+
+  // نام‌های جدید (صریح و فارسی‌تر)
+  pinEnabled:  (section) => `✅ قفل بخش «${section}» فعال شد.`,
+  pinDisabled: (section) => `🔓 قفل بخش «${section}» غیرفعال شد.`,
+  pinChanged:  (section) => `✅ رمز بخش «${section}» با موفقیت تغییر کرد.`,
+  // سازگاری با کد قدیمی
+  pinSet:      (section) => `✅ قفل بخش «${section}» فعال شد.`,
+  pinRemoved:  (section) => `🔓 قفل بخش «${section}» غیرفعال شد.`,
 
   pinPrompt:
-    '🔐 این بخش قفل است.\n\n' +
+    '🔐 این بخش با رمز محافظت شده است.\n\n' +
     'رمز عبور را وارد کنید:',
 
-  pinWrong:      '❌ رمز اشتباه است. دوباره تلاش کنید:',
-  pinMaxAttempts: '🚫 تعداد تلاش‌های مجاز به پایان رسید. از منوی اصلی دوباره وارد شوید.',
-
-  askCurrentPinToRemove: '🔐 رمز فعلی را برای برداشتن قفل وارد کنید:',
+  pinWrong:      '❌ رمز واردشده اشتباه است. دوباره تلاش کنید:',
+  pinMaxAttempts: '🚫 تعداد تلاش‌های مجاز تمام شد. برای امنیت، از منوی اصلی دوباره وارد شوید.',
 
   // ─── راهنما و تنظیمات ─────────────────────────────────────────────────────
   help:

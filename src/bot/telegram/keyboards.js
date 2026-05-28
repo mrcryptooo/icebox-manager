@@ -25,7 +25,8 @@ const businessOwnerMenu = Markup.keyboard([
 const managerMenu = Markup.keyboard([
   ['💰 ثبت فروش امروز', '🧾 ثبت خرج'],
   ['📊 گزارش‌ها', '🗂️ مدیریت ثبت‌ها'],
-  ['🏪 مدیریت شعبه‌ها', '❓ راهنما'],
+  ['🏪 مدیریت شعبه‌ها', '👥 مدیریت تیم'],
+  ['❓ راهنما'],
 ]).resize();
 
 // کارمند
@@ -40,7 +41,7 @@ const accountantMenu = Markup.keyboard([
   ['⚙️ تنظیمات', '❓ راهنما'],
 ]).resize();
 
-// سازگاری با Phase 6 (برای جاهایی که هنوز mainMenu مستقیم استفاده می‌شود)
+// سازگاری با Phase 6
 const mainMenu = businessOwnerMenu;
 
 /**
@@ -222,7 +223,35 @@ function jalaliDaysKeyboard(month, year) {
 function teamMenuKeyboard() {
   return Markup.keyboard([
     ['➕ افزودن عضو', '📋 لیست اعضا'],
-    ['🔄 تغییر نقش', '🚫 غیرفعال کردن'],
+    ['🏠 منوی اصلی'],
+  ]).resize();
+}
+
+// ─── انتخاب عضو از لیست (شامل غیرفعال) ─────────────────────────────────────
+function memberSelectKeyboard(members) {
+  const NUMS = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+  const RLBL = {
+    super_admin: 'سوپرادمین', business_owner: 'مالک',
+    manager: 'سرپرست', staff: 'کارمند', accountant: 'حسابدار',
+  };
+  const rows = members.map((m, i) => {
+    const num    = NUMS[i] || `${i + 1}.`;
+    const name   = m.display_name || m.name || `کاربر ${m.telegram_id}`;
+    const role   = RLBL[m.role] || m.role;
+    const status = (m.is_active === 1 || m.is_active === true) ? '' : ' 🚫';
+    return [`${num} ${name} — ${role}${status}`];
+  });
+  rows.push(['🏠 منوی اصلی']);
+  return Markup.keyboard(rows).resize();
+}
+
+// ─── عملیات روی عضو انتخاب‌شده ───────────────────────────────────────────────
+function memberActionKeyboard(isActive) {
+  return Markup.keyboard([
+    ['🔄 تغییر نقش'],
+    [isActive ? '🚫 غیرفعال کردن عضو' : '✅ فعال کردن عضو'],
+    ['👁 دیدن دسترسی‌ها'],
+    ['🔙 بازگشت به لیست'],
     ['🏠 منوی اصلی'],
   ]).resize();
 }
@@ -230,7 +259,7 @@ function teamMenuKeyboard() {
 // ─── انتخاب نقش ──────────────────────────────────────────────────────────────
 function roleSelectKeyboard() {
   return Markup.keyboard([
-    ['مدیر', 'کارمند'],
+    ['سرپرست', 'کارمند'],
     ['حسابدار'],
     ['❌ لغو'],
   ]).resize();
@@ -271,6 +300,21 @@ function lockSectionKeyboard(lockedSections) {
   return Markup.keyboard(rows).resize();
 }
 
+// ─── عملیات روی بخش قفل‌شده/آزاد ────────────────────────────────────────────
+function lockSectionActionKeyboard(hasLock) {
+  if (hasLock) {
+    return Markup.keyboard([
+      ['🔓 غیرفعال کردن قفل'],
+      ['🔑 تغییر رمز'],
+      ['❌ لغو', '🏠 منوی اصلی'],
+    ]).resize();
+  }
+  return Markup.keyboard([
+    ['🔐 فعال کردن قفل'],
+    ['❌ لغو', '🏠 منوی اصلی'],
+  ]).resize();
+}
+
 module.exports = {
   mainMenu,
   superAdminMenu,
@@ -298,8 +342,11 @@ module.exports = {
   settingsKeyboardSimple,
   exportMenuKeyboard,
   teamMenuKeyboard,
+  memberSelectKeyboard,
+  memberActionKeyboard,
   roleSelectKeyboard,
   businessTypeKeyboard,
   licenseMenuKeyboard,
   lockSectionKeyboard,
+  lockSectionActionKeyboard,
 };

@@ -8,6 +8,7 @@ const DEFAULT_PERMISSIONS = {
     'sales.create', 'sales.view', 'sales.edit', 'sales.delete',
     'expenses.create', 'expenses.view', 'expenses.edit', 'expenses.delete',
     'reports.view', 'exports.create', 'branches.manage', 'manage_records.view',
+    'team.manage',
   ],
   staff: [
     'sales.create', 'sales.view',
@@ -24,32 +25,54 @@ const DEFAULT_PERMISSIONS = {
 const ROLE_LABELS = {
   super_admin:    'سوپرادمین',
   business_owner: 'مالک',
-  manager:        'مدیر',
+  manager:        'سرپرست',
   staff:          'کارمند',
   accountant:     'حسابدار',
 };
 
 // ─── افزودن یا به‌روزرسانی عضو تیم ──────────────────────────────────────────
-async function addTeamMember({ businessId, userId, role }) {
+async function addTeamMember({ businessId, userId, role, displayName }) {
   const perms = DEFAULT_PERMISSIONS[role] || DEFAULT_PERMISSIONS.staff;
   const result = await query(`
-    INSERT INTO business_users (business_id, user_id, role, permissions)
-    VALUES ($1, $2, $3, $4::jsonb)
+    INSERT INTO business_users (business_id, user_id, role, permissions, display_name)
+    VALUES ($1, $2, $3, $4::jsonb, $5)
     ON CONFLICT (business_id, user_id) DO UPDATE
-      SET role = EXCLUDED.role, permissions = EXCLUDED.permissions, is_active = 1
+      SET role        = EXCLUDED.role,
+          permissions = EXCLUDED.permissions,
+          is_active   = 1,
+          display_name = CASE
+            WHEN EXCLUDED.display_name IS NOT NULL THEN EXCLUDED.display_name
+            ELSE business_users.display_name
+          END
     RETURNING *
-  `, [businessId, userId, role, JSON.stringify(perms)]);
+  `, [businessId, userId, role, JSON.stringify(perms), displayName || null]);
   return result.rows[0];
 }
 
 // ─── لیست اعضای فعال یک کسب‌وکار ────────────────────────────────────────────
 async function getTeamMembers(businessId) {
   const result = await query(`
-    SELECT bu.id, bu.role, bu.is_active, u.name, u.telegram_id
+    SELECT bu.id, bu.user_id, bu.role, bu.is_active,
+           bu.display_name, bu.permissions,
+           u.name, u.telegram_id
     FROM business_users bu
     JOIN users u ON bu.user_id = u.id
     WHERE bu.business_id = $1 AND bu.is_active = 1
     ORDER BY bu.id
+  `, [businessId]);
+  return result.rows;
+}
+
+// ─── لیست همه اعضا (شامل غیرفعال) ───────────────────────────────────────────
+async function getAllTeamMembers(businessId) {
+  const result = await query(`
+    SELECT bu.id, bu.user_id, bu.role, bu.is_active,
+           bu.display_name, bu.permissions,
+           u.name, u.telegram_id
+    FROM business_users bu
+    JOIN users u ON bu.user_id = u.id
+    WHERE bu.business_id = $1
+    ORDER BY bu.is_active DESC, bu.id
   `, [businessId]);
   return result.rows;
 }
@@ -70,6 +93,16 @@ async function updateMemberRole(businessId, userId, role) {
 async function deactivateMember(businessId, userId) {
   const result = await query(`
     UPDATE business_users SET is_active = 0
+    WHERE business_id = $1 AND user_id = $2
+    RETURNING *
+  `, [businessId, userId]);
+  return result.rows[0] || null;
+}
+
+// ─── فعال کردن عضو ───────────────────────────────────────────────────────────
+async function activateMember(businessId, userId) {
+  const result = await query(`
+    UPDATE business_users SET is_active = 1
     WHERE business_id = $1 AND user_id = $2
     RETURNING *
   `, [businessId, userId]);
@@ -103,8 +136,10 @@ async function getBizContextByTelegramId(telegramId) {
 module.exports = {
   addTeamMember,
   getTeamMembers,
+  getAllTeamMembers,
   updateMemberRole,
   deactivateMember,
+  activateMember,
   getBizContextByTelegramId,
   DEFAULT_PERMISSIONS,
   ROLE_LABELS,
