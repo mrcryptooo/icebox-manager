@@ -125,6 +125,21 @@ async function getTopExpenseCategoryForRange(branchId, startDate, endDate, busin
   return result.rows[0] || null;
 }
 
+// ─── گزارش ریز مخارج (Phase 8) ───────────────────────────────────────────────
+async function getExpensesDetailedReport(businessId, startDate, endDate) {
+  const result = await query(`
+    SELECT e.id, b.name AS branch_name, e.expense_date,
+           e.amount, e.category, e.note, e.created_at
+    FROM expenses e
+    LEFT JOIN branches b ON e.branch_id = b.id
+    WHERE e.business_id = $1
+      AND e.expense_date BETWEEN $2 AND $3
+      AND e.deleted_at IS NULL
+    ORDER BY e.expense_date DESC, e.id DESC
+  `, [businessId, startDate, endDate]);
+  return result.rows;
+}
+
 // ─── جمع‌بندی (pure) ─────────────────────────────────────────────────────────
 function aggregateExpenses(rows) {
   return rows.reduce((acc, row) => acc + (row.amount || 0), 0);
@@ -140,4 +155,5 @@ module.exports = {
   deleteExpense,
   aggregateExpenses,
   getTopExpenseCategoryForRange,
+  getExpensesDetailedReport,
 };

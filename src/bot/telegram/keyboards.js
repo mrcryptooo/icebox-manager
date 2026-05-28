@@ -77,7 +77,14 @@ function getMainMenuDynamic(biz) {
   if (has('team.manage'))     r4.push('👥 مدیریت تیم');
   if (r4.length) rows.push(r4);
 
-  // ردیف ۵: مجوزها (super_admin) + تنظیمات
+  // ردیف ۵: تأمین‌کننده‌ها
+  if (hasAll || has('suppliers.manage') || has('purchases.create') ||
+      has('purchases.view') || has('supplier_payments.create') ||
+      has('supplier_accounts.view')) {
+    rows.push(['🏭 تأمین‌کننده‌ها']);
+  }
+
+  // ردیف ۶: مجوزها (super_admin) + تنظیمات
   const r5 = [];
   if (role === 'super_admin')                r5.push('🔑 مجوزها');
   if (hasAll || has('settings.manage'))      r5.push('⚙️ تنظیمات');
@@ -158,6 +165,7 @@ function reportsMenuKeyboard() {
     ['📊 گزارش امروز', '📅 گزارش هفتگی'],
     ['🗓️ گزارش ماهانه', '🏪 گزارش شعبه'],
     ['🔁 مقایسه شعبه‌ها', '📆 بازه دلخواه'],
+    ['🧾 گزارش ریز مخارج'],
     ['🏠 منوی اصلی'],
   ]).resize();
 }
@@ -233,6 +241,7 @@ function settingsKeyboardSimple() {
 function exportMenuKeyboard() {
   return Markup.keyboard([
     ['📊 خروجی فروش‌ها', '💰 خروجی مخارج'],
+    ['🛒 خروجی خریدهای مواد'],
     ['🏠 منوی اصلی'],
   ]).resize();
 }
@@ -301,7 +310,7 @@ function memberActionKeyboard(isActive) {
   ]).resize();
 }
 
-// ─── مدیریت دسترسی‌های یک عضو (Phase 7D) ────────────────────────────────────
+// ─── مدیریت دسترسی‌های یک عضو (Phase 7D + 8) ────────────────────────────────
 function permissionsKeyboard(perms) {
   const permsArr = Array.isArray(perms) ? perms : [];
   const ALL = [
@@ -309,6 +318,8 @@ function permissionsKeyboard(perms) {
     'expenses.create',    'expenses.view',       'expenses.edit',   'expenses.delete',
     'reports.view',       'exports.create',
     'branches.manage',    'manage_records.view', 'settings.manage', 'team.manage',
+    'suppliers.manage',   'purchases.create',    'purchases.view',
+    'supplier_payments.create', 'supplier_accounts.view',
   ];
   const LBL = {
     'sales.create': 'ثبت فروش', 'sales.view': 'مشاهده فروش',
@@ -318,11 +329,65 @@ function permissionsKeyboard(perms) {
     'reports.view': 'مشاهده گزارش‌ها', 'exports.create': 'خروجی اطلاعات',
     'branches.manage': 'مدیریت شعبه‌ها', 'manage_records.view': 'مدیریت ثبت‌ها',
     'settings.manage': 'تنظیمات', 'team.manage': 'مدیریت تیم',
+    'suppliers.manage': 'مدیریت تأمین‌کننده‌ها',
+    'purchases.create': 'ثبت خرید مواد',
+    'purchases.view': 'مشاهده خریدها',
+    'supplier_payments.create': 'ثبت پرداخت به تأمین‌کننده',
+    'supplier_accounts.view': 'مشاهده حساب تأمین‌کنندگان',
   };
   const rows = ALL.map(p => [`${permsArr.includes(p) ? '✅' : '❌'} ${LBL[p]}`]);
   rows.push(['🔄 بازگردانی پیش‌فرض نقش']);
   rows.push(['🔙 بازگشت', '🏠 منوی اصلی']);
   return Markup.keyboard(rows).resize();
+}
+
+// ─── منوی تأمین‌کننده‌ها (Phase 8) ───────────────────────────────────────────
+function supplierMenuKeyboard() {
+  return Markup.keyboard([
+    ['➕ افزودن تأمین‌کننده', '📋 لیست تأمین‌کننده‌ها'],
+    ['💳 حساب تأمین‌کنندگان'],
+    ['🛒 ثبت خرید مواد', '💵 ثبت پرداخت به تأمین‌کننده'],
+    ['🏠 منوی اصلی'],
+  ]).resize();
+}
+
+// ─── انتخاب تأمین‌کننده از لیست ────────────────────────────────────────────
+function supplierSelectKeyboard(suppliers) {
+  const NUMS = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+  const rows = suppliers.map((s, i) => {
+    const num = NUMS[i] || `${i + 1}.`;
+    return [`${num} ${s.name}`];
+  });
+  rows.push(['❌ لغو', '🏠 منوی اصلی']);
+  return Markup.keyboard(rows).resize();
+}
+
+// ─── واحد کالا ───────────────────────────────────────────────────────────────
+function purchaseUnitKeyboard() {
+  return Markup.keyboard([
+    ['کیلو', 'عدد', 'لیتر'],
+    ['کارتن', 'بسته', 'سایر'],
+    ['❌ لغو'],
+  ]).resize();
+}
+
+// ─── روش پرداخت به تأمین‌کننده ───────────────────────────────────────────────
+function paymentMethodKeyboard() {
+  return Markup.keyboard([
+    ['نقدی', 'پوز'],
+    ['کارت‌به‌کارت', 'آنلاین'],
+    ['سایر'],
+    ['❌ لغو'],
+  ]).resize();
+}
+
+// ─── بازه گزارش ریز مخارج ────────────────────────────────────────────────────
+function expenseDetailPeriodKeyboard() {
+  return Markup.keyboard([
+    ['📊 امروز', '📅 این هفته'],
+    ['🗓️ این ماه', '📆 بازه دلخواه'],
+    ['🏠 منوی اصلی'],
+  ]).resize();
 }
 
 // ─── انتخاب نقش ──────────────────────────────────────────────────────────────
@@ -420,4 +485,9 @@ module.exports = {
   licenseMenuKeyboard,
   lockSectionKeyboard,
   lockSectionActionKeyboard,
+  supplierMenuKeyboard,
+  supplierSelectKeyboard,
+  purchaseUnitKeyboard,
+  paymentMethodKeyboard,
+  expenseDetailPeriodKeyboard,
 };

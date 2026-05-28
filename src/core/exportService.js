@@ -95,9 +95,26 @@ function buildExpensesCsv(rows) {
   return lines.join('\r\n');
 }
 
+function buildPurchasesCsv(rows) {
+  const header = 'id,supplier_name,branch_name,purchase_date,item_name,quantity,unit,unit_price,total_amount,paid_amount,remaining_amount,note,created_at';
+  const lines = [header];
+  for (const r of rows) {
+    lines.push([
+      r.id, escapeCell(r.supplier_name), escapeCell(r.branch_name),
+      r.purchase_date, escapeCell(r.item_name),
+      r.quantity || 0, escapeCell(r.unit),
+      r.unit_price || 0, r.total_amount || 0,
+      r.paid_amount || 0, r.remaining_amount || 0,
+      escapeCell(r.note), fmtTime(r.created_at),
+    ].join(','));
+  }
+  return lines.join('\r\n');
+}
+
 module.exports = {
   getAllSalesForExport,
   getAllExpensesForExport,
   buildSalesCsv,
   buildExpensesCsv,
+  buildPurchasesCsv,
 };

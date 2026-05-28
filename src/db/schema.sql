@@ -103,3 +103,48 @@ ALTER TABLE expenses ADD COLUMN IF NOT EXISTS business_id INTEGER;
 
 -- ─── مهاجرت Phase 7 QA: نام واقعی اعضا در تیم ───────────────────────────────
 ALTER TABLE business_users ADD COLUMN IF NOT EXISTS display_name TEXT;
+
+-- ─── تأمین‌کننده‌ها (Phase 8) ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS suppliers (
+  id          SERIAL PRIMARY KEY,
+  business_id INTEGER NOT NULL,
+  name        TEXT NOT NULL,
+  phone       TEXT,
+  note        TEXT,
+  is_active   INTEGER DEFAULT 1,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ─── خرید مواد از تأمین‌کننده (Phase 8) ─────────────────────────────────────
+CREATE TABLE IF NOT EXISTS supplier_purchases (
+  id                     SERIAL PRIMARY KEY,
+  business_id            INTEGER NOT NULL,
+  supplier_id            INTEGER NOT NULL,
+  branch_id              INTEGER,
+  purchase_date          TEXT NOT NULL,
+  item_name              TEXT NOT NULL,
+  quantity               NUMERIC NOT NULL DEFAULT 1,
+  unit                   TEXT NOT NULL DEFAULT 'عدد',
+  unit_price             NUMERIC NOT NULL DEFAULT 0,
+  total_amount           NUMERIC NOT NULL,
+  paid_amount            NUMERIC NOT NULL DEFAULT 0,
+  note                   TEXT,
+  created_by_telegram_id BIGINT,
+  deleted_at             TEXT,
+  created_at             TIMESTAMPTZ DEFAULT NOW(),
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+);
+
+-- ─── پرداخت‌های بعدی به تأمین‌کننده (Phase 8) ────────────────────────────────
+CREATE TABLE IF NOT EXISTS supplier_payments (
+  id                     SERIAL PRIMARY KEY,
+  business_id            INTEGER NOT NULL,
+  supplier_id            INTEGER NOT NULL,
+  payment_date           TEXT NOT NULL,
+  amount                 NUMERIC NOT NULL,
+  method                 TEXT NOT NULL DEFAULT 'نقدی',
+  note                   TEXT,
+  created_by_telegram_id BIGINT,
+  created_at             TIMESTAMPTZ DEFAULT NOW(),
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+);

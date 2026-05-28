@@ -434,6 +434,11 @@ const MSG = {
       'manage_records.view': '🗂️ مدیریت ثبت‌ها',
       'settings.manage': '⚙️ تنظیمات',
       'team.manage': '👥 مدیریت تیم',
+      'suppliers.manage': '🏭 مدیریت تأمین‌کننده‌ها',
+      'purchases.create': '🛒 ثبت خرید مواد',
+      'purchases.view': '👁 مشاهده خریدها',
+      'supplier_payments.create': '💵 ثبت پرداخت به تأمین‌کننده',
+      'supplier_accounts.view': '💳 مشاهده حساب تأمین‌کنندگان',
     };
     const sep = '─'.repeat(26);
     const permsArr = Array.isArray(perms) ? perms : [];
@@ -566,12 +571,19 @@ const MSG = {
       'manage_records.view': 'مدیریت ثبت‌ها',
       'settings.manage':     'تنظیمات',
       'team.manage':         'مدیریت تیم',
+      'suppliers.manage':    'مدیریت تأمین‌کننده‌ها',
+      'purchases.create':    'ثبت خرید مواد',
+      'purchases.view':      'مشاهده خریدها',
+      'supplier_payments.create': 'ثبت پرداخت به تأمین‌کننده',
+      'supplier_accounts.view':   'مشاهده حساب تأمین‌کنندگان',
     };
     const ALL = [
       'sales.create', 'sales.view', 'sales.edit', 'sales.delete',
       'expenses.create', 'expenses.view', 'expenses.edit', 'expenses.delete',
       'reports.view', 'exports.create',
       'branches.manage', 'manage_records.view', 'settings.manage', 'team.manage',
+      'suppliers.manage', 'purchases.create', 'purchases.view',
+      'supplier_payments.create', 'supplier_accounts.view',
     ];
     const permsArr = Array.isArray(perms) ? perms : [];
     const sep = '─'.repeat(24);
@@ -580,6 +592,176 @@ const MSG = {
     lines.push(`\n${sep}\nبرای تغییر هر دسترسی روی دکمه‌اش بزنید:`);
     return lines.join('\n');
   },
+
+  // ─── تأمین‌کننده‌ها (Phase 8) ─────────────────────────────────────────────
+  suppliersMenu:
+    '🏭 *تأمین‌کننده‌ها*\n\nاز منوی زیر انتخاب کنید:',
+
+  noSuppliers:
+    '⚠️ هیچ تأمین‌کننده‌ای ثبت نشده است.\n' +
+    'برای شروع «➕ افزودن تأمین‌کننده» را انتخاب کنید.',
+
+  askSupplierName:
+    '🏭 نام تأمین‌کننده را وارد کنید:\n' +
+    '(مثال: شرکت لبنی آریا)',
+
+  askSupplierPhone:
+    '📞 شماره تماس تأمین‌کننده (اختیاری):\n' +
+    '(شماره وارد کنید یا «ندارم» بنویسید)',
+
+  askSupplierNote:
+    '📝 یادداشت (اختیاری):\n' +
+    '(متن وارد کنید یا «ندارم» بنویسید)',
+
+  supplierAdded: (name) =>
+    `✅ تأمین‌کننده «${name}» با موفقیت ثبت شد.`,
+
+  supplierList: (suppliers) => {
+    if (suppliers.length === 0) return '⚠️ هیچ تأمین‌کننده‌ای ثبت نشده است.';
+    const sep = '─'.repeat(26);
+    const lines = [`📋 لیست تأمین‌کننده‌ها:\n${sep}`];
+    suppliers.forEach((s, i) => {
+      lines.push(
+        `\n${i + 1}. *${s.name}*` +
+        (s.phone ? `\n   📞 ${s.phone}` : '') +
+        (s.note  ? `\n   📝 ${s.note}`  : '')
+      );
+    });
+    lines.push(`\n${sep}`);
+    return lines.join('\n');
+  },
+
+  selectSupplier: '🏭 تأمین‌کننده را انتخاب کنید:',
+
+  // ─── ثبت خرید مواد ────────────────────────────────────────────────────────
+  askPurchaseItem:
+    '📦 نام کالا/ماده اولیه را وارد کنید:\n' +
+    '(مثال: شیر خام، خامه، شکر)',
+
+  askPurchaseQty:
+    '🔢 مقدار را وارد کنید:\n' +
+    '(عدد — مثال: 10 یا 5.5)',
+
+  askPurchaseUnit: '📏 واحد اندازه‌گیری را انتخاب کنید:',
+
+  askPurchaseUnitPrice:
+    '💰 قیمت واحد (تومان) را وارد کنید:\n' +
+    '(مثال: 50000)\n' +
+    'اگر نمی‌دانید عدد ۰ بزنید:',
+
+  askPurchasePaid:
+    '💵 مبلغ پرداخت‌شده در همین لحظه (تومان):\n' +
+    '(اگر نقدی پرداخت نشده عدد ۰ بزنید)',
+
+  paidTooHigh:
+    '⚠️ مبلغ پرداخت‌شده نمی‌تواند بیشتر از مبلغ کل باشد.\n' +
+    'لطفاً دوباره وارد کنید:',
+
+  askPurchaseNote:
+    '📝 یادداشت (اختیاری):\n' +
+    '(متن وارد کنید یا «ندارم» بنویسید)',
+
+  confirmPurchase: (d) =>
+    `📋 *خلاصه خرید — بررسی کنید:*\n\n` +
+    `🏭 تأمین‌کننده: ${d.supplierName}\n` +
+    `📅 تاریخ: ${d.date}\n` +
+    `${'─'.repeat(26)}\n` +
+    `📦 کالا: ${d.itemName}\n` +
+    `🔢 مقدار: ${d.quantity} ${d.unit}\n` +
+    `💰 قیمت واحد: ${d.unitPrice} تومان\n` +
+    `💳 جمع کل: ${d.totalAmount} تومان\n` +
+    `💵 پرداخت‌شده: ${d.paidAmount} تومان\n` +
+    `🔴 مانده بدهی: ${d.remaining} تومان\n` +
+    (d.note ? `📝 یادداشت: ${d.note}\n` : '') +
+    `\nبرای ذخیره «✅ تأیید و ذخیره» بزنید.`,
+
+  purchaseSaved: (d) =>
+    `✅ خرید با موفقیت ثبت شد.\n\n` +
+    `🏭 ${d.supplierName} | 📅 ${d.date}\n` +
+    `📦 ${d.itemName} — ${d.quantity} ${d.unit}\n` +
+    `💳 کل: ${d.totalAmount} تومان\n` +
+    `💵 پرداخت‌شده: ${d.paidAmount} تومان\n` +
+    (Number(d.remaining) > 0 ? `🔴 مانده بدهی: ${d.remaining} تومان` : `✅ تسویه کامل`),
+
+  // ─── ثبت پرداخت به تأمین‌کننده ───────────────────────────────────────────
+  askPaymentAmount:
+    '💵 مبلغ پرداخت (تومان) را وارد کنید:',
+
+  askPaymentMethod: '💳 روش پرداخت را انتخاب کنید:',
+
+  askPaymentNote:
+    '📝 یادداشت (اختیاری):\n' +
+    '(متن وارد کنید یا «ندارم» بنویسید)',
+
+  confirmPayment: (d) =>
+    `📋 *خلاصه پرداخت — بررسی کنید:*\n\n` +
+    `🏭 تأمین‌کننده: ${d.supplierName}\n` +
+    `📅 تاریخ: ${d.date}\n` +
+    `${'─'.repeat(26)}\n` +
+    `💵 مبلغ: ${d.amount} تومان\n` +
+    `💳 روش: ${d.method}\n` +
+    (d.note ? `📝 یادداشت: ${d.note}\n` : '') +
+    `\nبرای ذخیره «✅ تأیید و ذخیره» بزنید.`,
+
+  paymentSaved: (d) =>
+    `✅ پرداخت با موفقیت ثبت شد.\n\n` +
+    `🏭 ${d.supplierName}\n` +
+    `📅 ${d.date} | 💵 ${d.amount} تومان | 💳 ${d.method}`,
+
+  // ─── حساب تأمین‌کنندگان ──────────────────────────────────────────────────
+  supplierAccount: (s) => {
+    const sep = '─'.repeat(26);
+    return `💳 *حساب ${s.name}*\n${sep}\n` +
+      `🛒 جمع خریدها: ${s.totalPurchases} تومان\n` +
+      `💵 پرداخت هنگام خرید: ${s.paidAtPurchase} تومان\n` +
+      `🏦 پرداخت‌های جداگانه: ${s.totalPayments} تومان\n` +
+      `${sep}\n` +
+      `${Number(s.debt) > 0 ? `🔴 بدهی فعلی: ${s.debt} تومان` : `✅ حساب تسویه است`}`;
+  },
+
+  allSupplierAccounts: (suppliers) => {
+    if (suppliers.length === 0) return '⚠️ هیچ تأمین‌کننده‌ای ثبت نشده است.';
+    const sep = '─'.repeat(26);
+    const lines = [`💳 *خلاصه حساب تأمین‌کنندگان*\n${sep}`];
+    let totalDebt = 0;
+    suppliers.forEach((s, i) => {
+      const debt = Number(s.debt);
+      totalDebt += debt;
+      lines.push(
+        `\n${i + 1}. *${s.name}*\n` +
+        `   🛒 خریدها: ${s.totalPurchases} تومان\n` +
+        `   💵 پرداخت‌شده: ${Number(s.paidAtPurchase) + Number(s.totalPayments)} تومان\n` +
+        `   ${debt > 0 ? `🔴 بدهی: ${debt} تومان` : '✅ تسویه'}`
+      );
+    });
+    lines.push(`\n${sep}\n🔴 *جمع کل بدهی‌ها: ${totalDebt} تومان*`);
+    return lines.join('\n');
+  },
+
+  // ─── گزارش ریز مخارج (Phase 8) ───────────────────────────────────────────
+  expenseDetailMenu: '🧾 *گزارش ریز مخارج*\n\nبازه زمانی را انتخاب کنید:',
+
+  noExpensesInPeriod: '⚠️ هیچ خرجی در این بازه زمانی ثبت نشده است.',
+
+  expenseDetailReport: (rows, startDate, endDate, totalFormatted) => {
+    const sep = '─'.repeat(28);
+    const lines = [
+      `🧾 *گزارش ریز مخارج*\n📅 از ${startDate} تا ${endDate}\n${sep}`
+    ];
+    rows.forEach(r => {
+      lines.push(
+        `\n📌 ${r.expense_date} | ${r.branch_name || '—'}\n` +
+        `   📂 ${r.category} | 💰 ${r.amount} تومان` +
+        (r.note ? `\n   📝 ${r.note}` : '')
+      );
+    });
+    lines.push(`\n${sep}\n💰 *جمع کل: ${totalFormatted} تومان*`);
+    return lines.join('\n');
+  },
+
+  exportEmptyPurchases: '⚠️ هیچ خریدی برای خروجی وجود ندارد.',
 };
+
+module.exports = MSG;
 
 module.exports = MSG;

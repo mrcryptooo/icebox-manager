@@ -8,6 +8,7 @@ const DEFAULT_PERMISSIONS = {
     'sales.create', 'sales.view', 'sales.edit',
     'expenses.create', 'expenses.view',
     'reports.view', 'manage_records.view',
+    'purchases.create', 'purchases.view', 'supplier_accounts.view',
   ],
   staff: [
     'sales.create',
@@ -15,6 +16,7 @@ const DEFAULT_PERMISSIONS = {
   accountant: [
     'sales.view', 'expenses.view',
     'reports.view', 'exports.create',
+    'purchases.view', 'supplier_payments.create', 'supplier_accounts.view',
   ],
 };
 
@@ -24,6 +26,8 @@ const ALL_PERMISSIONS = [
   'expenses.create',    'expenses.view',       'expenses.edit',   'expenses.delete',
   'reports.view',       'exports.create',
   'branches.manage',    'manage_records.view', 'settings.manage', 'team.manage',
+  'suppliers.manage',   'purchases.create',    'purchases.view',
+  'supplier_payments.create', 'supplier_accounts.view',
 ];
 
 // ─── نام فارسی permissionها ────────────────────────────────────────────────────
@@ -38,10 +42,15 @@ const PERMISSION_LABELS = {
   'expenses.delete':     'حذف خرج',
   'reports.view':        'مشاهده گزارش‌ها',
   'exports.create':      'خروجی اطلاعات',
-  'branches.manage':     'مدیریت شعبه‌ها',
-  'manage_records.view': 'مدیریت ثبت‌ها',
-  'settings.manage':     'تنظیمات',
-  'team.manage':         'مدیریت تیم',
+  'branches.manage':          'مدیریت شعبه‌ها',
+  'manage_records.view':      'مدیریت ثبت‌ها',
+  'settings.manage':          'تنظیمات',
+  'team.manage':              'مدیریت تیم',
+  'suppliers.manage':         'مدیریت تأمین‌کننده‌ها',
+  'purchases.create':         'ثبت خرید مواد',
+  'purchases.view':           'مشاهده خریدها',
+  'supplier_payments.create': 'ثبت پرداخت به تأمین‌کننده',
+  'supplier_accounts.view':   'مشاهده حساب تأمین‌کنندگان',
 };
 
 // ─── نام فارسی نقش‌ها ─────────────────────────────────────────────────────────

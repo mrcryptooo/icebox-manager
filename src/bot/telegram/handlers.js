@@ -22,7 +22,7 @@ const {
 } = require('../../core/salesService');
 const {
   recordExpense, getExpenseById, getRecentExpenses,
-  updateExpense, deleteExpense,
+  updateExpense, deleteExpense, getExpensesDetailedReport,
 } = require('../../core/expenseService');
 const {
   getDailyReport,       getWeeklyReport,       getMonthlyReport,
@@ -32,8 +32,14 @@ const {
 } = require('../../core/reportService');
 const {
   getAllSalesForExport, getAllExpensesForExport,
-  buildSalesCsv, buildExpensesCsv,
+  buildSalesCsv, buildExpensesCsv, buildPurchasesCsv,
 } = require('../../core/exportService');
+const {
+  createSupplier, listSuppliers,
+  getSupplierBalance, getAllSupplierBalances,
+  createSupplierPurchase, createSupplierPayment,
+  getAllPurchasesForExport,
+} = require('../../core/supplierService');
 const { createBusiness, getDefaultBusiness, ensureDefaultBusiness } = require('../../core/businessService');
 const { createLicense, getLicenseByCode, getAllLicenses, activateLicense } = require('../../core/licenseService');
 const {
@@ -544,9 +550,10 @@ async function handleReportsMenu(ctx, text) {
     session.data = { reportType };
     return ctx.reply(MSG.selectReportType, KB.reportTypeKeyboard());
   }
-  if (text === '🏪 گزارش شعبه')     return startBranchReport(ctx);
-  if (text === '🔁 مقایسه شعبه‌ها') return startCompareReport(ctx);
-  if (text === '📆 بازه دلخواه')     return startCustomReport(ctx);
+  if (text === '🏪 گزارش شعبه')         return startBranchReport(ctx);
+  if (text === '🔁 مقایسه شعبه‌ها')     return startCompareReport(ctx);
+  if (text === '📆 بازه دلخواه')         return startCustomReport(ctx);
+  if (text === '🧾 گزارش ریز مخارج')    return startExpenseDetailReport(ctx);
 
   return ctx.reply(MSG.reportsMenu, KB.reportsMenuKeyboard());
 }
@@ -700,8 +707,23 @@ async function handleDatepickDay(ctx, text) {
 
 async function finalizeDatePicker(ctx) {
   const session = getSession(ctx.from.id);
-  const { datePickerFlow, startDate, endDate, scope, branchId } = session.data;
+  const { datePickerFlow, startDate, endDate, startJalali, endJalali, scope, branchId } = session.data;
   const biz = session.biz;
+
+  // ── گزارش ریز مخارج (Phase 8) ────────────────────────────────────────────
+  if (datePickerFlow === 'expense_detail') {
+    const rows = await getExpensesDetailedReport(biz?.businessId, startDate, endDate);
+    const total = rows.reduce((s, r) => s + Number(r.amount || 0), 0);
+    const formattedRows = rows.map(r => ({ ...r, amount: formatMoney(r.amount) }));
+    clearSession(ctx.from.id);
+    if (rows.length === 0) {
+      return ctx.reply(MSG.noExpensesInPeriod, getMenu(getSession(ctx.from.id)));
+    }
+    return ctx.reply(
+      MSG.expenseDetailReport(formattedRows, startJalali || startDate, endJalali || endDate, formatMoney(total)),
+      { parse_mode: 'Markdown', ...getMenu(getSession(ctx.from.id)) }
+    );
+  }
 
   let report;
   if (datePickerFlow === 'compare') {
@@ -816,6 +838,61 @@ async function handleBranchReportPeriod(ctx, text) {
     return startPickingDate(ctx, 'start');
   }
   return ctx.reply(MSG.selectPeriod, KB.periodKeyboard());
+}
+
+// ─── گزارش ریز مخارج (Phase 8) ───────────────────────────────────────────────
+
+async function startExpenseDetailReport(ctx) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  if (!hasPermission(biz, 'reports.view')) {
+    return ctx.reply(MSG.permissionDenied, getMenu(session));
+  }
+  session.step = 'expense_detail_period';
+  session.data = {};
+  return ctx.reply(MSG.expenseDetailMenu, { parse_mode: 'Markdown', ...KB.expenseDetailPeriodKeyboard() });
+}
+
+async function handleExpenseDetailPeriod(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+
+  async function showExpenseDetail(start, end, startLabel, endLabel) {
+    const rows = await getExpensesDetailedReport(biz?.businessId, start, end);
+    const total = rows.reduce((s, r) => s + Number(r.amount || 0), 0);
+    const formattedRows = rows.map(r => ({ ...r, amount: formatMoney(r.amount) }));
+    clearSession(ctx.from.id);
+    if (rows.length === 0) {
+      return ctx.reply(MSG.noExpensesInPeriod, getMenu(getSession(ctx.from.id)));
+    }
+    return ctx.reply(
+      MSG.expenseDetailReport(formattedRows, startLabel, endLabel, formatMoney(total)),
+      { parse_mode: 'Markdown', ...getMenu(getSession(ctx.from.id)) }
+    );
+  }
+
+  if (text === '📊 امروز') {
+    const today = getTodayDate();
+    const todayJ = getTodayJalali();
+    return showExpenseDetail(today, today, todayJ, todayJ);
+  }
+  if (text === '📅 این هفته') {
+    const { start, end } = getWeekRange();
+    const startJ = gregorianToJalaliDateString(start);
+    const endJ   = gregorianToJalaliDateString(end);
+    return showExpenseDetail(start, end, startJ, endJ);
+  }
+  if (text === '🗓️ این ماه') {
+    const { start, end } = getMonthRange();
+    const startJ = gregorianToJalaliDateString(start);
+    const endJ   = gregorianToJalaliDateString(end);
+    return showExpenseDetail(start, end, startJ, endJ);
+  }
+  if (text === '📆 بازه دلخواه') {
+    session.data.datePickerFlow = 'expense_detail';
+    return startPickingDate(ctx, 'start');
+  }
+  return ctx.reply(MSG.expenseDetailMenu, { parse_mode: 'Markdown', ...KB.expenseDetailPeriodKeyboard() });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1685,8 +1762,9 @@ async function handlePinVerify(ctx, text) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function handleExportMenuChoice(ctx, text) {
-  if (text === '📊 خروجی فروش‌ها') return handleSalesCsvExport(ctx);
-  if (text === '💰 خروجی مخارج')   return handleExpensesCsvExport(ctx);
+  if (text === '📊 خروجی فروش‌ها')       return handleSalesCsvExport(ctx);
+  if (text === '💰 خروجی مخارج')          return handleExpensesCsvExport(ctx);
+  if (text === '🛒 خروجی خریدهای مواد')   return handlePurchasesCsvExport(ctx);
   return ctx.reply(MSG.exportMenu, { parse_mode: 'Markdown', ...KB.exportMenuKeyboard() });
 }
 
@@ -1720,6 +1798,364 @@ async function handleExpensesCsvExport(ctx) {
     await ctx.replyWithDocument(
       { source: fs.createReadStream(tmpPath), filename: 'expenses_export.csv' },
       { caption: `💰 خروجی مخارج — ${rows.length} رکورد` }
+    );
+  } finally {
+    try { fs.unlinkSync(tmpPath); } catch (_) {}
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// تأمین‌کننده‌ها (Phase 8)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── منوی اصلی تأمین‌کننده‌ها ─────────────────────────────────────────────────
+async function startSupplierMenu(ctx) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  const hasPerm = hasPermission(biz, 'suppliers.manage') ||
+                  hasPermission(biz, 'purchases.create') ||
+                  hasPermission(biz, 'purchases.view') ||
+                  hasPermission(biz, 'supplier_payments.create') ||
+                  hasPermission(biz, 'supplier_accounts.view') ||
+                  (Array.isArray(biz?.permissions) && biz.permissions.includes('*'));
+  if (!hasPerm) {
+    return ctx.reply(MSG.permissionDenied, getMenu(session));
+  }
+  session.step = 'supplier_menu';
+  session.data = {};
+  return ctx.reply(MSG.suppliersMenu, { parse_mode: 'Markdown', ...KB.supplierMenuKeyboard() });
+}
+
+async function handleSupplierMenu(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+
+  if (text === '➕ افزودن تأمین‌کننده') {
+    if (!hasPermission(biz, 'suppliers.manage')) {
+      return ctx.reply(MSG.permissionDenied, KB.supplierMenuKeyboard());
+    }
+    session.step = 'supplier_add_name';
+    return ctx.reply(MSG.askSupplierName, KB.cancelKeyboard);
+  }
+
+  if (text === '📋 لیست تأمین‌کننده‌ها') {
+    const suppliers = await listSuppliers(biz.businessId);
+    return ctx.reply(
+      MSG.supplierList(suppliers),
+      { parse_mode: 'Markdown', ...KB.supplierMenuKeyboard() }
+    );
+  }
+
+  if (text === '💳 حساب تأمین‌کنندگان') {
+    if (!hasPermission(biz, 'supplier_accounts.view')) {
+      return ctx.reply(MSG.permissionDenied, KB.supplierMenuKeyboard());
+    }
+    const suppliers = await getAllSupplierBalances(biz.businessId);
+    const formatted = suppliers.map(s => ({
+      ...s,
+      totalPurchases: formatMoney(s.totalPurchases),
+      paidAtPurchase: formatMoney(s.paidAtPurchase),
+      totalPayments:  formatMoney(s.totalPayments),
+      debt:           formatMoney(s.debt),
+    }));
+    return ctx.reply(
+      MSG.allSupplierAccounts(formatted),
+      { parse_mode: 'Markdown', ...KB.supplierMenuKeyboard() }
+    );
+  }
+
+  if (text === '🛒 ثبت خرید مواد') {
+    return startPurchaseFlow(ctx);
+  }
+
+  if (text === '💵 ثبت پرداخت به تأمین‌کننده') {
+    return startSuppPaymentFlow(ctx);
+  }
+
+  return ctx.reply(MSG.suppliersMenu, { parse_mode: 'Markdown', ...KB.supplierMenuKeyboard() });
+}
+
+// ─── جریان افزودن تأمین‌کننده ─────────────────────────────────────────────────
+async function handleSupplierStep(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const { step, data } = session;
+  const biz = session.biz;
+
+  if (step === 'supplier_add_name') {
+    if (!text || text.trim().length < 1) return ctx.reply(MSG.askSupplierName, KB.cancelKeyboard);
+    data.supplierName = text.trim();
+    session.step = 'supplier_add_phone';
+    return ctx.reply(MSG.askSupplierPhone, KB.cancelKeyboard);
+  }
+
+  if (step === 'supplier_add_phone') {
+    data.supplierPhone = text === 'ندارم' ? null : text.trim();
+    session.step = 'supplier_add_note';
+    return ctx.reply(MSG.askSupplierNote, KB.cancelKeyboard);
+  }
+
+  if (step === 'supplier_add_note') {
+    data.supplierNote = text === 'ندارم' ? null : text.trim();
+    const supplier = await createSupplier({
+      businessId: biz.businessId,
+      name:  data.supplierName,
+      phone: data.supplierPhone,
+      note:  data.supplierNote,
+    });
+    clearSession(ctx.from.id);
+    return ctx.reply(MSG.supplierAdded(supplier.name), getMenu(getSession(ctx.from.id)));
+  }
+}
+
+// ─── جریان ثبت خرید مواد ─────────────────────────────────────────────────────
+async function startPurchaseFlow(ctx) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  if (!hasPermission(biz, 'purchases.create')) {
+    return ctx.reply(MSG.permissionDenied, getMenu(session));
+  }
+  const suppliers = await listSuppliers(biz.businessId);
+  if (suppliers.length === 0) {
+    return ctx.reply(MSG.noSuppliers, KB.supplierMenuKeyboard());
+  }
+  session.step = 'purchase_select_supplier';
+  session.data = { purchaseDate: getTodayDate(), suppliers };
+  return ctx.reply(MSG.selectSupplier, KB.supplierSelectKeyboard(suppliers));
+}
+
+const PURCHASE_UNITS = ['کیلو', 'عدد', 'لیتر', 'کارتن', 'بسته', 'سایر'];
+const PAYMENT_METHODS = ['نقدی', 'پوز', 'کارت‌به‌کارت', 'آنلاین', 'سایر'];
+
+async function handlePurchaseStep(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const { step, data } = session;
+  const biz = session.biz;
+
+  if (step === 'purchase_select_supplier') {
+    const idx = parseMemberIndex(text);
+    if (idx < 0 || idx >= data.suppliers.length) {
+      return ctx.reply(MSG.selectSupplier, KB.supplierSelectKeyboard(data.suppliers));
+    }
+    const s = data.suppliers[idx];
+    data.supplierId   = s.id;
+    data.supplierName = s.name;
+    session.step = 'purchase_item';
+    return ctx.reply(MSG.askPurchaseItem, KB.cancelKeyboard);
+  }
+
+  if (step === 'purchase_item') {
+    if (!text || text.trim().length < 1) return ctx.reply(MSG.askPurchaseItem, KB.cancelKeyboard);
+    data.itemName = text.trim();
+    session.step  = 'purchase_qty';
+    return ctx.reply(MSG.askPurchaseQty, KB.cancelKeyboard);
+  }
+
+  if (step === 'purchase_qty') {
+    const n = parseNumber(text);
+    if (n === null || n <= 0) return ctx.reply(MSG.invalidNumber, KB.cancelKeyboard);
+    data.quantity = n;
+    session.step  = 'purchase_unit';
+    return ctx.reply(MSG.askPurchaseUnit, KB.purchaseUnitKeyboard());
+  }
+
+  if (step === 'purchase_unit') {
+    if (!PURCHASE_UNITS.includes(text)) {
+      return ctx.reply(MSG.askPurchaseUnit, KB.purchaseUnitKeyboard());
+    }
+    data.unit    = text;
+    session.step = 'purchase_unit_price';
+    return ctx.reply(MSG.askPurchaseUnitPrice, KB.cancelKeyboard);
+  }
+
+  if (step === 'purchase_unit_price') {
+    const n = parseNumber(text);
+    if (n === null || n < 0) return ctx.reply(MSG.invalidNumber, KB.cancelKeyboard);
+    data.unitPrice   = n;
+    data.totalAmount = Math.round(data.quantity * n);
+    session.step     = 'purchase_paid';
+    return ctx.reply(MSG.askPurchasePaid, KB.cancelKeyboard);
+  }
+
+  if (step === 'purchase_paid') {
+    const n = parseNumber(text);
+    if (n === null || n < 0) return ctx.reply(MSG.invalidNumber, KB.cancelKeyboard);
+    if (n > data.totalAmount) return ctx.reply(MSG.paidTooHigh, KB.cancelKeyboard);
+    data.paidAmount = n;
+    session.step    = 'purchase_note';
+    return ctx.reply(MSG.askPurchaseNote, KB.cancelKeyboard);
+  }
+
+  if (step === 'purchase_note') {
+    data.note    = text === 'ندارم' ? null : text.trim();
+    session.step = 'purchase_confirm';
+    const remaining = data.totalAmount - data.paidAmount;
+    return ctx.reply(
+      MSG.confirmPurchase({
+        supplierName: data.supplierName,
+        date:         gDate(data.purchaseDate),
+        itemName:     data.itemName,
+        quantity:     formatNumber(data.quantity),
+        unit:         data.unit,
+        unitPrice:    formatMoney(data.unitPrice),
+        totalAmount:  formatMoney(data.totalAmount),
+        paidAmount:   formatMoney(data.paidAmount),
+        remaining:    formatMoney(remaining),
+        note:         data.note,
+      }),
+      { parse_mode: 'Markdown', ...KB.confirmSaleKeyboard() }
+    );
+  }
+
+  if (step === 'purchase_confirm') {
+    if (text === '✅ تأیید و ذخیره') {
+      await createSupplierPurchase({
+        businessId:          biz.businessId,
+        supplierId:          data.supplierId,
+        branchId:            null,
+        purchaseDate:        data.purchaseDate,
+        itemName:            data.itemName,
+        quantity:            data.quantity,
+        unit:                data.unit,
+        unitPrice:           data.unitPrice,
+        totalAmount:         data.totalAmount,
+        paidAmount:          data.paidAmount,
+        note:                data.note,
+        createdByTelegramId: ctx.from.id,
+      });
+      const remaining = data.totalAmount - data.paidAmount;
+      const summary = {
+        supplierName: data.supplierName,
+        date:         gDate(data.purchaseDate),
+        itemName:     data.itemName,
+        quantity:     formatNumber(data.quantity),
+        unit:         data.unit,
+        totalAmount:  formatMoney(data.totalAmount),
+        paidAmount:   formatMoney(data.paidAmount),
+        remaining:    formatMoney(remaining),
+      };
+      clearSession(ctx.from.id);
+      return ctx.reply(MSG.purchaseSaved(summary), getMenu(getSession(ctx.from.id)));
+    }
+    if (text === '✏️ ویرایش') {
+      const suppliers = await listSuppliers(biz.businessId);
+      session.data = { purchaseDate: data.purchaseDate, suppliers };
+      session.step = 'purchase_select_supplier';
+      return ctx.reply(MSG.selectSupplier, KB.supplierSelectKeyboard(suppliers));
+    }
+    clearSession(ctx.from.id);
+    return ctx.reply(MSG.cancelled, getMenu(getSession(ctx.from.id)));
+  }
+}
+
+// ─── جریان ثبت پرداخت به تأمین‌کننده ─────────────────────────────────────────
+async function startSuppPaymentFlow(ctx) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  if (!hasPermission(biz, 'supplier_payments.create')) {
+    return ctx.reply(MSG.permissionDenied, getMenu(session));
+  }
+  const suppliers = await listSuppliers(biz.businessId);
+  if (suppliers.length === 0) {
+    return ctx.reply(MSG.noSuppliers, KB.supplierMenuKeyboard());
+  }
+  session.step = 'supp_pay_select_supplier';
+  session.data = { paymentDate: getTodayDate(), suppliers };
+  return ctx.reply(MSG.selectSupplier, KB.supplierSelectKeyboard(suppliers));
+}
+
+async function handleSuppPaymentStep(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const { step, data } = session;
+  const biz = session.biz;
+
+  if (step === 'supp_pay_select_supplier') {
+    const idx = parseMemberIndex(text);
+    if (idx < 0 || idx >= data.suppliers.length) {
+      return ctx.reply(MSG.selectSupplier, KB.supplierSelectKeyboard(data.suppliers));
+    }
+    const s = data.suppliers[idx];
+    data.supplierId   = s.id;
+    data.supplierName = s.name;
+    session.step = 'supp_pay_amount';
+    return ctx.reply(MSG.askPaymentAmount, KB.cancelKeyboard);
+  }
+
+  if (step === 'supp_pay_amount') {
+    const n = parseNumber(text);
+    if (n === null || n <= 0) return ctx.reply(MSG.invalidAmount, KB.cancelKeyboard);
+    data.amount  = n;
+    session.step = 'supp_pay_method';
+    return ctx.reply(MSG.askPaymentMethod, KB.paymentMethodKeyboard());
+  }
+
+  if (step === 'supp_pay_method') {
+    if (!PAYMENT_METHODS.includes(text)) {
+      return ctx.reply(MSG.askPaymentMethod, KB.paymentMethodKeyboard());
+    }
+    data.method  = text;
+    session.step = 'supp_pay_note';
+    return ctx.reply(MSG.askPaymentNote, KB.cancelKeyboard);
+  }
+
+  if (step === 'supp_pay_note') {
+    data.note    = text === 'ندارم' ? null : text.trim();
+    session.step = 'supp_pay_confirm';
+    return ctx.reply(
+      MSG.confirmPayment({
+        supplierName: data.supplierName,
+        date:         gDate(data.paymentDate),
+        amount:       formatMoney(data.amount),
+        method:       data.method,
+        note:         data.note,
+      }),
+      { parse_mode: 'Markdown', ...KB.confirmSaleKeyboard() }
+    );
+  }
+
+  if (step === 'supp_pay_confirm') {
+    if (text === '✅ تأیید و ذخیره') {
+      await createSupplierPayment({
+        businessId:          biz.businessId,
+        supplierId:          data.supplierId,
+        paymentDate:         data.paymentDate,
+        amount:              data.amount,
+        method:              data.method,
+        note:                data.note,
+        createdByTelegramId: ctx.from.id,
+      });
+      const summary = {
+        supplierName: data.supplierName,
+        date:         gDate(data.paymentDate),
+        amount:       formatMoney(data.amount),
+        method:       data.method,
+      };
+      clearSession(ctx.from.id);
+      return ctx.reply(MSG.paymentSaved(summary), getMenu(getSession(ctx.from.id)));
+    }
+    if (text === '✏️ ویرایش') {
+      const suppliers = await listSuppliers(biz.businessId);
+      session.data = { paymentDate: data.paymentDate, suppliers };
+      session.step = 'supp_pay_select_supplier';
+      return ctx.reply(MSG.selectSupplier, KB.supplierSelectKeyboard(suppliers));
+    }
+    clearSession(ctx.from.id);
+    return ctx.reply(MSG.cancelled, getMenu(getSession(ctx.from.id)));
+  }
+}
+
+// ─── خروجی CSV خریدها ─────────────────────────────────────────────────────────
+async function handlePurchasesCsvExport(ctx) {
+  const session = getSession(ctx.from.id);
+  await ctx.reply(MSG.exportGenerating);
+  const rows = await getAllPurchasesForExport(session.biz?.businessId);
+  if (rows.length === 0) return ctx.reply(MSG.exportEmptyPurchases);
+  const csv = '﻿' + buildPurchasesCsv(rows);
+  const tmpPath = path.join(os.tmpdir(), `icebox_purchases_${Date.now()}.csv`);
+  fs.writeFileSync(tmpPath, csv, 'utf8');
+  try {
+    await ctx.replyWithDocument(
+      { source: fs.createReadStream(tmpPath), filename: 'purchases_export.csv' },
+      { caption: `🛒 خروجی خریدهای مواد — ${rows.length} رکورد` }
     );
   } finally {
     try { fs.unlinkSync(tmpPath); } catch (_) {}
@@ -1786,6 +2222,7 @@ async function handleText(ctx) {
     if (text === '🔑 مجوزها')           return startLicenseManagement(ctx);
     if (text === '⚙️ تنظیمات')          return startSettings(ctx);
     if (text === '📤 خروجی اطلاعات')   return startExportMenu(ctx);
+    if (text === '🏭 تأمین‌کننده‌ها')    return startSupplierMenu(ctx);
     if (text === '❓ راهنما') {
       return ctx.reply(MSG.help, { parse_mode: 'Markdown', ...getMenu(session) });
     }
@@ -1831,6 +2268,15 @@ async function handleText(ctx) {
   if (session.step && session.step.startsWith('delete_expense_'))   return handleDeleteExpenseStep(ctx, text);
   if (session.step && session.step.startsWith('edit_sale_'))        return handleEditSaleStep(ctx, text);
   if (session.step && session.step.startsWith('edit_expense_'))     return handleEditExpenseStep(ctx, text);
+
+  // ── گزارش ریز مخارج ──────────────────────────────────────────────────────
+  if (session.step === 'expense_detail_period') return handleExpenseDetailPeriod(ctx, text);
+
+  // ── تأمین‌کننده‌ها (Phase 8) ────────────────────────────────────────────────
+  if (session.step === 'supplier_menu')                   return handleSupplierMenu(ctx, text);
+  if (session.step && session.step.startsWith('supplier_add_')) return handleSupplierStep(ctx, text);
+  if (session.step && session.step.startsWith('purchase_'))    return handlePurchaseStep(ctx, text);
+  if (session.step && session.step.startsWith('supp_pay_'))    return handleSuppPaymentStep(ctx, text);
 
   // ── تنظیمات و خروجی ────────────────────────────────────────────────────────
   if (session.step === 'settings_menu') return handleSettingsMenu(ctx, text);
