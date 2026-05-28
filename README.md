@@ -226,6 +226,8 @@ Railway بعد از تنظیم Variables خودکار ربات را deploy می�
 |------|---------|
 | `sales_export.csv` | id, branch_name, report_date, cash_amount, card_amount, transfer_amount, online_amount, total_amount, order_count, note, created_at |
 | `expenses_export.csv` | id, branch_name, expense_date, amount, category, note, created_at |
+| `purchases_export.csv` | id, supplier_name, branch_name, purchase_date, item_name, quantity, unit, unit_price, total_amount, paid_amount, remaining_amount, note, created_at |
+| `inventory_export.csv` | item_name, stock, unit, min_stock, status |
 
 - رکوردهای حذف‌شده (soft delete) در خروجی نمی‌آیند
 - فایل CSV با BOM (UTF-8) ذخیره می‌شود — در Excel فارسی‌ها درست نمایش داده می‌شوند
@@ -249,11 +251,13 @@ src/
     reportService.js  ← تولید گزارش‌های ترکیبی
     branchService.js  ← مدیریت شعبه‌ها
     userService.js    ← مدیریت کاربران
-    exportService.js  ← خروجی CSV فروش‌ها و مخارج
-    businessService.js← مدیریت کسب‌وکارها (Phase 7)
-    licenseService.js ← مدیریت لایسنس‌ها (Phase 7)
-    teamService.js    ← مدیریت تیم و نقش‌ها (Phase 7)
-    lockService.js    ← قفل بخش‌ها با PIN (Phase 7)
+    exportService.js    ← خروجی CSV فروش‌ها، مخارج، خریدها و انبار
+    businessService.js  ← مدیریت کسب‌وکارها (Phase 7)
+    licenseService.js   ← مدیریت لایسنس‌ها (Phase 7)
+    teamService.js      ← مدیریت تیم و نقش‌ها (Phase 7)
+    lockService.js      ← قفل بخش‌ها با PIN (Phase 7)
+    supplierService.js  ← تأمین‌کنندگان، خریدها، پرداخت‌ها (Phase 8)
+    inventoryService.js ← انبار مواد اولیه، حرکات موجودی (Phase 8C)
   db/
     database.js       ← اتصال PostgreSQL (pg Pool) و initDatabase
     schema.sql        ← طرح جداول دیتابیس (PostgreSQL)
@@ -330,6 +334,10 @@ railway.json          ← تنظیمات Railway
 | مدیریت ثبت‌ها | ✅ | ❌ | ❌ |
 | تنظیمات | ❌ | ❌ | ❌ |
 | مدیریت تیم | ❌ | ❌ | ❌ |
+| مشاهده انبار | ✅ | ❌ | ✅ |
+| مدیریت انبار | ❌ | ❌ | ❌ |
+| ثبت مصرف انبار | ✅ | ❌ | ❌ |
+| اصلاح موجودی انبار | ✅ | ❌ | ❌ |
 
 مالک کسب‌وکار و super_admin دسترسی کامل (`*`) دارند.
 
@@ -345,6 +353,46 @@ railway.json          ← تنظیمات Railway
 ۴. گزینه **🔄 بازگردانی پیش‌فرض نقش** دسترسی‌ها را به حالت اولیه برمی‌گرداند
 
 > دسترسی مالک کسب‌وکار و super_admin قابل محدودسازی نیست.
+
+---
+
+## انبار مواد اولیه (Phase 8C)
+
+### منوی 📦 انبار
+
+| دکمه | عملکرد | دسترسی مورد نیاز |
+|------|---------|-----------------|
+| 📋 موجودی فعلی | خلاصه موجودی همه مواد + وضعیت کافی/کمبود | `inventory.view` |
+| ⚠️ هشدار کمبود | فقط مواد با موجودی ≤ حداقل تعریف‌شده | `inventory.view` |
+| ➕ افزودن ماده | ثبت ماده اولیه جدید با موجودی اولیه | `inventory.manage` |
+| ➖ ثبت مصرف/خروج | کسر موجودی با جلوگیری از منفی شدن | `inventory.consume` |
+| 🔧 اصلاح موجودی | ورود موجودی واقعی — سیستم تفاوت را ثبت می‌کند | `inventory.adjust` |
+| 📜 گردش انبار | آخرین ۲۰ حرکت انبار (ورود/خروج/اصلاح) | `inventory.view` |
+
+### فرمول محاسبه موجودی
+
+```
+موجودی = SUM(in) − SUM(out) + SUM(adjustment)
+```
+
+- `in`: ورودی (خرید از تأمین‌کننده، موجودی اولیه)
+- `out`: خروجی (مصرف)
+- `adjustment`: عدد علامت‌دار — می‌تواند مثبت یا منفی باشد
+
+### اتصال خودکار خرید مواد به انبار
+
+وقتی **🛒 ثبت خرید مواد** تأیید می‌شود:
+- اگر ماده‌ای با همان نام و واحد وجود دارد → موجودی آن افزایش می‌یابد
+- اگر ماده وجود ندارد → خودکار ساخته می‌شود و موجودی ثبت می‌گردد
+
+### دسترسی‌های انبار (Phase 8C)
+
+| دسترسی | توضیح | پیش‌فرض |
+|--------|-------|---------|
+| `inventory.view` | مشاهده موجودی و گردش | مالک، سرپرست، حسابدار |
+| `inventory.manage` | افزودن/ویرایش مواد اولیه | مالک |
+| `inventory.consume` | ثبت مصرف و خروج | مالک، سرپرست |
+| `inventory.adjust` | اصلاح دستی موجودی | مالک، سرپرست |
 
 ---
 
@@ -420,7 +468,8 @@ total_paid       = paid_at_purchase + later_payments
 | Phase 7D | ویرایش دستی دسترسی اعضا، منوی پویا براساس permission | ✅ |
 | Phase 8A | گزارش ریز مخارج، تأمین‌کنندگان، ثبت خرید مواد | ✅ |
 | Phase 8B | پرداخت به تأمین‌کننده، حساب بدهی، خروجی CSV خریدها | ✅ |
-| Phase 9 | داشبورد کامل، موجودی انبار، Bale | 🔜 |
+| Phase 8C | انبار مواد اولیه، گردش موجودی، هشدار کمبود | ✅ |
+| Phase 9 | داشبورد کامل، حقوق پرسنل، Bale | 🔜 |
 
 ---
 

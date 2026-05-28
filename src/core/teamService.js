@@ -9,6 +9,7 @@ const DEFAULT_PERMISSIONS = {
     'expenses.create', 'expenses.view',
     'reports.view', 'manage_records.view',
     'purchases.create', 'purchases.view', 'supplier_accounts.view',
+    'inventory.view', 'inventory.consume', 'inventory.adjust',
   ],
   staff: [
     'sales.create',
@@ -17,6 +18,7 @@ const DEFAULT_PERMISSIONS = {
     'sales.view', 'expenses.view',
     'reports.view', 'exports.create',
     'purchases.view', 'supplier_payments.create', 'supplier_accounts.view',
+    'inventory.view',
   ],
 };
 
@@ -28,6 +30,7 @@ const ALL_PERMISSIONS = [
   'branches.manage',    'manage_records.view', 'settings.manage', 'team.manage',
   'suppliers.manage',   'purchases.create',    'purchases.view',
   'supplier_payments.create', 'supplier_accounts.view',
+  'inventory.view',     'inventory.manage',    'inventory.consume', 'inventory.adjust',
 ];
 
 // ─── نام فارسی permissionها ────────────────────────────────────────────────────
@@ -51,6 +54,10 @@ const PERMISSION_LABELS = {
   'purchases.view':           'مشاهده خریدها',
   'supplier_payments.create': 'ثبت پرداخت به تأمین‌کننده',
   'supplier_accounts.view':   'مشاهده حساب تأمین‌کنندگان',
+  'inventory.view':           'مشاهده انبار',
+  'inventory.manage':         'مدیریت انبار',
+  'inventory.consume':        'ثبت مصرف انبار',
+  'inventory.adjust':         'اصلاح موجودی انبار',
 };
 
 // ─── نام فارسی نقش‌ها ─────────────────────────────────────────────────────────

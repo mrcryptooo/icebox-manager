@@ -148,3 +148,32 @@ CREATE TABLE IF NOT EXISTS supplier_payments (
   created_at             TIMESTAMPTZ DEFAULT NOW(),
   FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
 );
+
+-- ─── آیتم‌های انبار (Phase 8C) ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS inventory_items (
+  id          SERIAL PRIMARY KEY,
+  business_id INTEGER NOT NULL,
+  name        TEXT NOT NULL,
+  unit        TEXT NOT NULL DEFAULT 'عدد',
+  min_stock   NUMERIC DEFAULT 0,
+  status      TEXT NOT NULL DEFAULT 'active',
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ─── گردش انبار (Phase 8C) ──────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS inventory_movements (
+  id                     SERIAL PRIMARY KEY,
+  business_id            INTEGER NOT NULL,
+  item_id                INTEGER NOT NULL,
+  movement_type          TEXT NOT NULL,
+  quantity               NUMERIC NOT NULL,
+  unit                   TEXT NOT NULL,
+  source_type            TEXT,
+  source_id              INTEGER,
+  note                   TEXT,
+  created_by_telegram_id BIGINT,
+  movement_date          TEXT NOT NULL,
+  created_at             TIMESTAMPTZ DEFAULT NOW(),
+  FOREIGN KEY (item_id) REFERENCES inventory_items(id)
+);

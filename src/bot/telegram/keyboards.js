@@ -84,6 +84,12 @@ function getMainMenuDynamic(biz) {
     rows.push(['🏭 تأمین‌کننده‌ها']);
   }
 
+  // ردیف ۵b: انبار مواد اولیه
+  if (hasAll || has('inventory.view') || has('inventory.manage') ||
+      has('inventory.consume') || has('inventory.adjust')) {
+    rows.push(['📦 انبار']);
+  }
+
   // ردیف ۶: مجوزها (super_admin) + تنظیمات
   const r5 = [];
   if (role === 'super_admin')                r5.push('🔑 مجوزها');
@@ -242,6 +248,7 @@ function exportMenuKeyboard() {
   return Markup.keyboard([
     ['📊 خروجی فروش‌ها', '💰 خروجی مخارج'],
     ['🛒 خروجی خریدهای مواد'],
+    ['📦 خروجی انبار'],
     ['🏠 منوی اصلی'],
   ]).resize();
 }
@@ -310,7 +317,7 @@ function memberActionKeyboard(isActive) {
   ]).resize();
 }
 
-// ─── مدیریت دسترسی‌های یک عضو (Phase 7D + 8) ────────────────────────────────
+// ─── مدیریت دسترسی‌های یک عضو (Phase 7D + 8C) ───────────────────────────────
 function permissionsKeyboard(perms) {
   const permsArr = Array.isArray(perms) ? perms : [];
   const ALL = [
@@ -320,6 +327,7 @@ function permissionsKeyboard(perms) {
     'branches.manage',    'manage_records.view', 'settings.manage', 'team.manage',
     'suppliers.manage',   'purchases.create',    'purchases.view',
     'supplier_payments.create', 'supplier_accounts.view',
+    'inventory.view',     'inventory.manage',    'inventory.consume', 'inventory.adjust',
   ];
   const LBL = {
     'sales.create': 'ثبت فروش', 'sales.view': 'مشاهده فروش',
@@ -334,6 +342,10 @@ function permissionsKeyboard(perms) {
     'purchases.view': 'مشاهده خریدها',
     'supplier_payments.create': 'ثبت پرداخت به تأمین‌کننده',
     'supplier_accounts.view': 'مشاهده حساب تأمین‌کنندگان',
+    'inventory.view': 'مشاهده انبار',
+    'inventory.manage': 'مدیریت انبار',
+    'inventory.consume': 'ثبت مصرف انبار',
+    'inventory.adjust': 'اصلاح موجودی انبار',
   };
   const rows = ALL.map(p => [`${permsArr.includes(p) ? '✅' : '❌'} ${LBL[p]}`]);
   rows.push(['🔄 بازگردانی پیش‌فرض نقش']);
@@ -434,6 +446,30 @@ function lockSectionKeyboard(lockedSections) {
   return Markup.keyboard(rows).resize();
 }
 
+// ─── منوی انبار مواد اولیه (Phase 8C) ───────────────────────────────────────
+function inventoryMenuKeyboard() {
+  return Markup.keyboard([
+    ['📋 موجودی فعلی', '⚠️ هشدار کمبود'],
+    ['➕ افزودن ماده', '➖ ثبت مصرف/خروج'],
+    ['🔧 اصلاح موجودی', '📜 گردش انبار'],
+    ['🏠 منوی اصلی'],
+  ]).resize();
+}
+
+// ─── انتخاب ماده از لیست انبار ───────────────────────────────────────────────
+function inventoryItemSelectKeyboard(items) {
+  const PD   = ['۰','۱','۲','۳','۴','۵','۶','۷','۸','۹'];
+  const fmtN = n => String(Math.round(Number(n) || 0)).replace(/\d/g, d => PD[d]);
+  const NUMS = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+  const rows = items.map((item, i) => {
+    const num   = NUMS[i] || `${i + 1}.`;
+    const stock = item.stock !== undefined ? ` — ${fmtN(item.stock)}` : '';
+    return [`${num} ${item.name} (${item.unit})${stock}`];
+  });
+  rows.push(['❌ لغو', '🏠 منوی اصلی']);
+  return Markup.keyboard(rows).resize();
+}
+
 // ─── عملیات روی بخش قفل‌شده/آزاد ────────────────────────────────────────────
 function lockSectionActionKeyboard(hasLock) {
   if (hasLock) {
@@ -490,4 +526,6 @@ module.exports = {
   purchaseUnitKeyboard,
   paymentMethodKeyboard,
   expenseDetailPeriodKeyboard,
+  inventoryMenuKeyboard,
+  inventoryItemSelectKeyboard,
 };

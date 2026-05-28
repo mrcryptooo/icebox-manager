@@ -439,6 +439,10 @@ const MSG = {
       'purchases.view': '👁 مشاهده خریدها',
       'supplier_payments.create': '💵 ثبت پرداخت به تأمین‌کننده',
       'supplier_accounts.view': '💳 مشاهده حساب تأمین‌کنندگان',
+      'inventory.view': '📦 مشاهده انبار',
+      'inventory.manage': '🏗️ مدیریت انبار',
+      'inventory.consume': '➖ ثبت مصرف انبار',
+      'inventory.adjust': '🔧 اصلاح موجودی انبار',
     };
     const sep = '─'.repeat(26);
     const permsArr = Array.isArray(perms) ? perms : [];
@@ -576,6 +580,10 @@ const MSG = {
       'purchases.view':      'مشاهده خریدها',
       'supplier_payments.create': 'ثبت پرداخت به تأمین‌کننده',
       'supplier_accounts.view':   'مشاهده حساب تأمین‌کنندگان',
+      'inventory.view':           'مشاهده انبار',
+      'inventory.manage':         'مدیریت انبار',
+      'inventory.consume':        'ثبت مصرف انبار',
+      'inventory.adjust':         'اصلاح موجودی انبار',
     };
     const ALL = [
       'sales.create', 'sales.view', 'sales.edit', 'sales.delete',
@@ -584,6 +592,7 @@ const MSG = {
       'branches.manage', 'manage_records.view', 'settings.manage', 'team.manage',
       'suppliers.manage', 'purchases.create', 'purchases.view',
       'supplier_payments.create', 'supplier_accounts.view',
+      'inventory.view', 'inventory.manage', 'inventory.consume', 'inventory.adjust',
     ];
     const permsArr = Array.isArray(perms) ? perms : [];
     const sep = '─'.repeat(24);
@@ -772,9 +781,151 @@ const MSG = {
     return lines.join('\n');
   },
 
-  exportEmptyPurchases: '⚠️ هیچ خریدی برای خروجی وجود ندارد.',
-};
+  exportEmptyPurchases:  '⚠️ هیچ خریدی برای خروجی وجود ندارد.',
+  exportEmptyInventory:  '⚠️ هیچ ماده اولیه‌ای در انبار ثبت نشده است.',
 
-module.exports = MSG;
+  // ─── انبار مواد اولیه (Phase 8C) ──────────────────────────────────────────
+  inventoryMenu: '📦 *انبار مواد اولیه*\n\nاز منوی زیر انتخاب کنید:',
+
+  noInventoryItems:
+    '⚠️ هیچ ماده اولیه‌ای در انبار ثبت نشده است.\n' +
+    'برای شروع «➕ افزودن ماده» را انتخاب کنید.',
+
+  allInventoryOk: '✅ همه مواد اولیه موجودی کافی دارند.',
+
+  askInventoryItemName:
+    '📦 نام ماده اولیه را وارد کنید:\n' +
+    '(مثال: شیر خام، خامه، شکر)',
+
+  askInventoryItemUnit: '📏 واحد اندازه‌گیری را انتخاب کنید:',
+
+  askInventoryItemMinStock:
+    '⚠️ حداقل موجودی هشدار را وارد کنید:\n' +
+    '(اگر نمی‌خواهید هشدار کمبود داشته باشید عدد ۰ بزنید)',
+
+  askInventoryInitialStock:
+    '📦 موجودی اولیه این ماده چقدر است؟\n' +
+    '(اگر موجودی ندارید عدد ۰ بزنید)',
+
+  inventoryItemAdded: (name, unit, stock) => {
+    const pd  = '۰۱۲۳۴۵۶۷۸۹'.split('');
+    const fmt = n => String(Math.round(Number(n) || 0)).replace(/\d/g, d => pd[d]);
+    return `✅ «${name}» (${unit}) با موفقیت به انبار اضافه شد.` +
+      (Number(stock) > 0 ? `\n📦 موجودی اولیه: ${fmt(stock)} ${unit}` : '');
+  },
+
+  selectInventoryItem: '📦 ماده اولیه را انتخاب کنید:',
+
+  askConsumeQty: (name, unit, stock) => {
+    const pd  = '۰۱۲۳۴۵۶۷۸۹'.split('');
+    const fmt = n => String(Math.round(Number(n) || 0)).replace(/\d/g, d => pd[d]);
+    return `➖ *مصرف/خروج از انبار*\n\n` +
+      `📦 ماده: ${name}\n` +
+      `📊 موجودی فعلی: ${fmt(stock)} ${unit}\n\n` +
+      `مقدار مصرف را وارد کنید (${unit}):`;
+  },
+
+  askConsumeNote:
+    '📝 دلیل یا توضیح (اختیاری):\n' +
+    '(متن وارد کنید یا «ندارم» بنویسید)',
+
+  consumeStockInsufficient: (name, currentStock, unit) => {
+    const pd  = '۰۱۲۳۴۵۶۷۸۹'.split('');
+    const fmt = n => String(Math.round(Number(n) || 0)).replace(/\d/g, d => pd[d]);
+    return `⚠️ موجودی ناکافی!\n\n` +
+      `📦 ${name}: موجودی فعلی ${fmt(currentStock)} ${unit}\n` +
+      `مقدار وارد‌شده از موجودی بیشتر است.\n` +
+      `لطفاً مقدار کمتری وارد کنید:`;
+  },
+
+  consumeSaved: (name, qty, unit, newStock) => {
+    const pd  = '۰۱۲۳۴۵۶۷۸۹'.split('');
+    const fmt = n => String(Math.round(Number(n) || 0)).replace(/\d/g, d => pd[d]);
+    return `✅ مصرف ثبت شد.\n\n` +
+      `📦 ${name}: ${fmt(qty)} ${unit} خارج شد.\n` +
+      `📊 موجودی جدید: ${fmt(newStock)} ${unit}`;
+  },
+
+  askAdjustQty: (name, unit, currentStock) => {
+    const pd  = '۰۱۲۳۴۵۶۷۸۹'.split('');
+    const fmt = n => String(Math.round(Number(n) || 0)).replace(/\d/g, d => pd[d]);
+    return `🔧 *اصلاح موجودی*\n\n` +
+      `📦 ماده: ${name}\n` +
+      `📊 موجودی سیستم: ${fmt(currentStock)} ${unit}\n\n` +
+      `موجودی واقعی را وارد کنید (${unit}):`;
+  },
+
+  adjustSaved: (name, currentStock, actualQty, diff, unit) => {
+    const pd  = '۰۱۲۳۴۵۶۷۸۹'.split('');
+    const fmt = n => String(Math.round(Math.abs(Number(n)) || 0)).replace(/\d/g, d => pd[d]);
+    const fmtS = n => String(Math.round(Number(n) || 0)).replace(/\d/g, d => pd[d]);
+    return `✅ موجودی اصلاح شد.\n\n` +
+      `📦 ${name}\n` +
+      `📊 موجودی قبلی: ${fmtS(currentStock)} ${unit}\n` +
+      `✏️ موجودی جدید: ${fmtS(actualQty)} ${unit}\n` +
+      (Number(diff) >= 0
+        ? `➕ افزایش: ${fmt(diff)} ${unit}`
+        : `➖ کاهش: ${fmt(diff)} ${unit}`);
+  },
+
+  inventorySummary: (items) => {
+    const pd  = '۰۱۲۳۴۵۶۷۸۹'.split('');
+    const fmt = n => Math.round(Number(n) || 0).toLocaleString('en-US').replace(/\d/g, d => pd[d]);
+    const sep = '─'.repeat(26);
+    const lines = [`📦 *خلاصه موجودی انبار*\n${sep}`];
+    items.forEach((item, i) => {
+      const stock    = Number(item.stock)     || 0;
+      const minStock = Number(item.min_stock) || 0;
+      const status   = stock <= minStock ? '⚠️ کمبود' : '✅ کافی';
+      lines.push(
+        `\n${i + 1}. *${item.name}* (${item.unit})\n` +
+        `   📦 موجودی: ${fmt(stock)} | حداقل: ${fmt(minStock)} | ${status}`
+      );
+    });
+    lines.push(`\n${sep}`);
+    return lines.join('\n');
+  },
+
+  inventoryLowStock: (items) => {
+    const pd  = '۰۱۲۳۴۵۶۷۸۹'.split('');
+    const fmt = n => Math.round(Number(n) || 0).toLocaleString('en-US').replace(/\d/g, d => pd[d]);
+    const sep = '─'.repeat(26);
+    const lines = [`⚠️ *مواد اولیه با موجودی کم*\n${sep}`];
+    items.forEach(item => {
+      const stock    = Number(item.stock)     || 0;
+      const minStock = Number(item.min_stock) || 0;
+      lines.push(
+        `\n📌 *${item.name}* (${item.unit})\n` +
+        `   موجودی: ${fmt(stock)} — حداقل: ${fmt(minStock)}`
+      );
+    });
+    lines.push(
+      `\n${sep}\n` +
+      `برای افزودن موجودی از «➕ افزودن ماده» یا «🛒 ثبت خرید مواد» استفاده کنید.`
+    );
+    return lines.join('\n');
+  },
+
+  inventoryMovements: (movements) => {
+    const pd        = '۰۱۲۳۴۵۶۷۸۹'.split('');
+    const fmt       = n => String(Math.round(Math.abs(Number(n)) || 0)).replace(/\d/g, d => pd[d]);
+    const fmtCnt    = n => String(Math.round(Number(n) || 0)).replace(/\d/g, d => pd[d]);
+    const TYPE_ICON = { in: '➕', out: '➖', adjustment: '🔧' };
+    const TYPE_LBL  = { in: 'ورودی', out: 'خروجی', adjustment: 'اصلاح' };
+    const sep   = '─'.repeat(26);
+    const lines = [`📜 *گردش انبار — ${fmtCnt(movements.length)} حرکت اخیر*\n${sep}`];
+    movements.forEach(m => {
+      const icon = TYPE_ICON[m.movement_type] || '•';
+      const lbl  = TYPE_LBL[m.movement_type]  || m.movement_type;
+      lines.push(
+        `\n📅 ${m.movement_date} | *${m.item_name}*\n` +
+        `   ${icon} ${lbl}: ${fmt(m.quantity)} ${m.unit}` +
+        (m.note ? `\n   📝 ${m.note}` : '')
+      );
+    });
+    lines.push(`\n${sep}`);
+    return lines.join('\n');
+  },
+};
 
 module.exports = MSG;

@@ -111,10 +111,26 @@ function buildPurchasesCsv(rows) {
   return lines.join('\r\n');
 }
 
+function buildInventoryCsv(rows) {
+  const header = 'item_name,stock,unit,min_stock,status';
+  const lines = [header];
+  for (const r of rows) {
+    lines.push([
+      escapeCell(r.name),
+      r.stock || 0,
+      escapeCell(r.unit),
+      r.min_stock || 0,
+      escapeCell(r.status),
+    ].join(','));
+  }
+  return lines.join('\r\n');
+}
+
 module.exports = {
   getAllSalesForExport,
   getAllExpensesForExport,
   buildSalesCsv,
   buildExpensesCsv,
   buildPurchasesCsv,
+  buildInventoryCsv,
 };

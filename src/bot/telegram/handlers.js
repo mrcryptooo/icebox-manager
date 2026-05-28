@@ -32,8 +32,15 @@ const {
 } = require('../../core/reportService');
 const {
   getAllSalesForExport, getAllExpensesForExport,
-  buildSalesCsv, buildExpensesCsv, buildPurchasesCsv,
+  buildSalesCsv, buildExpensesCsv, buildPurchasesCsv, buildInventoryCsv,
 } = require('../../core/exportService');
+const {
+  createInventoryItem, listInventoryItems, getInventoryItemById,
+  findInventoryItemByName, createInventoryMovement,
+  addStock, removeStock, adjustStock,
+  getItemStock, getInventorySummary, getLowStockItems,
+  listInventoryMovements, getAllInventoryForExport,
+} = require('../../core/inventoryService');
 const {
   createSupplier, listSuppliers,
   getSupplierBalance, getAllSupplierBalances,
@@ -1765,6 +1772,7 @@ async function handleExportMenuChoice(ctx, text) {
   if (text === '📊 خروجی فروش‌ها')       return handleSalesCsvExport(ctx);
   if (text === '💰 خروجی مخارج')          return handleExpensesCsvExport(ctx);
   if (text === '🛒 خروجی خریدهای مواد')   return handlePurchasesCsvExport(ctx);
+  if (text === '📦 خروجی انبار')          return handleInventoryCsvExport(ctx);
   return ctx.reply(MSG.exportMenu, { parse_mode: 'Markdown', ...KB.exportMenuKeyboard() });
 }
 
@@ -2003,7 +2011,7 @@ async function handlePurchaseStep(ctx, text) {
 
   if (step === 'purchase_confirm') {
     if (text === '✅ تأیید و ذخیره') {
-      await createSupplierPurchase({
+      const purchase = await createSupplierPurchase({
         businessId:          biz.businessId,
         supplierId:          data.supplierId,
         branchId:            null,
@@ -2017,6 +2025,33 @@ async function handlePurchaseStep(ctx, text) {
         note:                data.note,
         createdByTelegramId: ctx.from.id,
       });
+      // ─── اتصال خرید به انبار ──────────────────────────────────────────────
+      try {
+        let invItem = await findInventoryItemByName(biz.businessId, data.itemName, data.unit);
+        if (!invItem) {
+          invItem = await createInventoryItem({
+            businessId: biz.businessId,
+            name:       data.itemName,
+            unit:       data.unit,
+            minStock:   0,
+          });
+        }
+        if (invItem?.id) {
+          await addStock({
+            businessId:  biz.businessId,
+            itemId:      invItem.id,
+            quantity:    data.quantity,
+            unit:        data.unit,
+            sourceType:  'supplier_purchase',
+            sourceId:    purchase?.id || null,
+            note:        data.note,
+            telegramId:  ctx.from.id,
+            date:        data.purchaseDate,
+          });
+        }
+      } catch (_invErr) {
+        // خطای انبار جریان اصلی را متوقف نمی‌کند
+      }
       const remaining = data.totalAmount - data.paidAmount;
       const summary = {
         supplierName: data.supplierName,
@@ -2142,6 +2177,332 @@ async function handleSuppPaymentStep(ctx, text) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// انبار مواد اولیه (Phase 8C)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── منوی اصلی انبار ──────────────────────────────────────────────────────────
+async function startInventoryMenu(ctx) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  const hasPerm =
+    (Array.isArray(biz?.permissions) && biz.permissions.includes('*')) ||
+    hasPermission(biz, 'inventory.view')    ||
+    hasPermission(biz, 'inventory.manage')  ||
+    hasPermission(biz, 'inventory.consume') ||
+    hasPermission(biz, 'inventory.adjust');
+  if (!hasPerm) {
+    return ctx.reply(MSG.permissionDenied, getMenu(session));
+  }
+  session.step = 'inventory_menu';
+  session.data = {};
+  return ctx.reply(MSG.inventoryMenu, { parse_mode: 'Markdown', ...KB.inventoryMenuKeyboard() });
+}
+
+async function handleInventoryMenu(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+
+  // ─── موجودی فعلی ──────────────────────────────────────────────────────────
+  if (text === '📋 موجودی فعلی') {
+    if (!hasPermission(biz, 'inventory.view')) {
+      return ctx.reply(MSG.permissionDenied, KB.inventoryMenuKeyboard());
+    }
+    const items = await getInventorySummary(biz.businessId);
+    if (items.length === 0) {
+      return ctx.reply(MSG.noInventoryItems, KB.inventoryMenuKeyboard());
+    }
+    return ctx.reply(
+      MSG.inventorySummary(items),
+      { parse_mode: 'Markdown', ...KB.inventoryMenuKeyboard() }
+    );
+  }
+
+  // ─── هشدار کمبود ──────────────────────────────────────────────────────────
+  if (text === '⚠️ هشدار کمبود') {
+    if (!hasPermission(biz, 'inventory.view')) {
+      return ctx.reply(MSG.permissionDenied, KB.inventoryMenuKeyboard());
+    }
+    const items = await getLowStockItems(biz.businessId);
+    if (items.length === 0) {
+      return ctx.reply(MSG.allInventoryOk, KB.inventoryMenuKeyboard());
+    }
+    return ctx.reply(
+      MSG.inventoryLowStock(items),
+      { parse_mode: 'Markdown', ...KB.inventoryMenuKeyboard() }
+    );
+  }
+
+  // ─── افزودن ماده ──────────────────────────────────────────────────────────
+  if (text === '➕ افزودن ماده') {
+    if (!hasPermission(biz, 'inventory.manage')) {
+      return ctx.reply(MSG.permissionDenied, KB.inventoryMenuKeyboard());
+    }
+    session.step = 'inventory_add_name';
+    session.data = {};
+    return ctx.reply(MSG.askInventoryItemName, KB.cancelKeyboard);
+  }
+
+  // ─── ثبت مصرف/خروج ────────────────────────────────────────────────────────
+  if (text === '➖ ثبت مصرف/خروج') {
+    if (!hasPermission(biz, 'inventory.consume')) {
+      return ctx.reply(MSG.permissionDenied, KB.inventoryMenuKeyboard());
+    }
+    const items = await getInventorySummary(biz.businessId);
+    if (items.length === 0) {
+      return ctx.reply(MSG.noInventoryItems, KB.inventoryMenuKeyboard());
+    }
+    session.step = 'inventory_consume_select';
+    session.data = { inventoryItems: items };
+    return ctx.reply(MSG.selectInventoryItem, KB.inventoryItemSelectKeyboard(items));
+  }
+
+  // ─── اصلاح موجودی ─────────────────────────────────────────────────────────
+  if (text === '🔧 اصلاح موجودی') {
+    if (!hasPermission(biz, 'inventory.adjust')) {
+      return ctx.reply(MSG.permissionDenied, KB.inventoryMenuKeyboard());
+    }
+    const items = await getInventorySummary(biz.businessId);
+    if (items.length === 0) {
+      return ctx.reply(MSG.noInventoryItems, KB.inventoryMenuKeyboard());
+    }
+    session.step = 'inventory_adjust_select';
+    session.data = { inventoryItems: items };
+    return ctx.reply(MSG.selectInventoryItem, KB.inventoryItemSelectKeyboard(items));
+  }
+
+  // ─── گردش انبار ───────────────────────────────────────────────────────────
+  if (text === '📜 گردش انبار') {
+    if (!hasPermission(biz, 'inventory.view')) {
+      return ctx.reply(MSG.permissionDenied, KB.inventoryMenuKeyboard());
+    }
+    const rawMovements = await listInventoryMovements(biz.businessId, 20);
+    if (rawMovements.length === 0) {
+      return ctx.reply('⚠️ هیچ حرکتی در انبار ثبت نشده است.', KB.inventoryMenuKeyboard());
+    }
+    // تاریخ را به شمسی تبدیل کن
+    const movements = rawMovements.map(m => ({
+      ...m,
+      movement_date: gDate(m.movement_date),
+    }));
+    return ctx.reply(
+      MSG.inventoryMovements(movements),
+      { parse_mode: 'Markdown', ...KB.inventoryMenuKeyboard() }
+    );
+  }
+
+  return ctx.reply(MSG.inventoryMenu, { parse_mode: 'Markdown', ...KB.inventoryMenuKeyboard() });
+}
+
+// ─── جریان افزودن ماده اولیه ──────────────────────────────────────────────────
+async function handleInventoryAddStep(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const { step, data } = session;
+  const biz = session.biz;
+
+  if (step === 'inventory_add_name') {
+    if (!text || text.trim().length < 1) {
+      return ctx.reply(MSG.askInventoryItemName, KB.cancelKeyboard);
+    }
+    data.invName = text.trim();
+    session.step = 'inventory_add_unit';
+    return ctx.reply(MSG.askInventoryItemUnit, KB.purchaseUnitKeyboard());
+  }
+
+  if (step === 'inventory_add_unit') {
+    const UNITS = ['کیلو', 'عدد', 'لیتر', 'کارتن', 'بسته', 'سایر'];
+    if (!UNITS.includes(text)) {
+      return ctx.reply(MSG.askInventoryItemUnit, KB.purchaseUnitKeyboard());
+    }
+    data.invUnit = text;
+    session.step = 'inventory_add_min_stock';
+    return ctx.reply(MSG.askInventoryItemMinStock, KB.cancelKeyboard);
+  }
+
+  if (step === 'inventory_add_min_stock') {
+    const n = parseNumber(text);
+    if (n === null || n < 0) return ctx.reply(MSG.invalidNumber, KB.cancelKeyboard);
+    data.invMinStock = n;
+    session.step = 'inventory_add_initial';
+    return ctx.reply(MSG.askInventoryInitialStock, KB.cancelKeyboard);
+  }
+
+  if (step === 'inventory_add_initial') {
+    const n = parseNumber(text);
+    if (n === null || n < 0) return ctx.reply(MSG.invalidNumber, KB.cancelKeyboard);
+    data.invInitial = n;
+
+    // ثبت آیتم
+    const item = await createInventoryItem({
+      businessId: biz.businessId,
+      name:       data.invName,
+      unit:       data.invUnit,
+      minStock:   data.invMinStock,
+    });
+
+    // اگر موجودی اولیه > 0 بود، یک حرکت ورودی ثبت کن
+    if (data.invInitial > 0) {
+      await addStock({
+        businessId: biz.businessId,
+        itemId:     item.id,
+        quantity:   data.invInitial,
+        unit:       data.invUnit,
+        sourceType: 'manual',
+        note:       'موجودی اولیه',
+        telegramId: ctx.from.id,
+      });
+    }
+
+    session.step = 'inventory_menu';
+    session.data = {};
+    return ctx.reply(
+      MSG.inventoryItemAdded(item.name, item.unit, data.invInitial),
+      KB.inventoryMenuKeyboard()
+    );
+  }
+}
+
+// ─── جریان ثبت مصرف/خروج ─────────────────────────────────────────────────────
+async function handleInventoryConsumeStep(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const { step, data } = session;
+  const biz = session.biz;
+
+  if (step === 'inventory_consume_select') {
+    const items = data.inventoryItems || [];
+    const idx   = parseMemberIndex(text);
+    if (idx < 0 || idx >= items.length) {
+      return ctx.reply(MSG.selectInventoryItem, KB.inventoryItemSelectKeyboard(items));
+    }
+    const item = items[idx];
+    data.selectedItem  = item;
+    data.currentStock  = Number(item.stock) || 0;
+    session.step = 'inventory_consume_qty';
+    return ctx.reply(
+      MSG.askConsumeQty(item.name, item.unit, data.currentStock),
+      { parse_mode: 'Markdown', ...KB.cancelKeyboard }
+    );
+  }
+
+  if (step === 'inventory_consume_qty') {
+    const n = parseNumber(text);
+    if (n === null || n <= 0) return ctx.reply(MSG.invalidNumber, KB.cancelKeyboard);
+    if (n > data.currentStock) {
+      return ctx.reply(
+        MSG.consumeStockInsufficient(data.selectedItem.name, data.currentStock, data.selectedItem.unit),
+        KB.cancelKeyboard
+      );
+    }
+    data.consumeQty = n;
+    session.step    = 'inventory_consume_note';
+    return ctx.reply(MSG.askConsumeNote, KB.cancelKeyboard);
+  }
+
+  if (step === 'inventory_consume_note') {
+    const note = text === 'ندارم' ? null : text.trim();
+    const item = data.selectedItem;
+
+    // بررسی مجدد موجودی (safety check)
+    const freshStock = await getItemStock(biz.businessId, item.id);
+    if (data.consumeQty > freshStock) {
+      session.step    = 'inventory_consume_qty';
+      data.currentStock = freshStock;
+      return ctx.reply(
+        MSG.consumeStockInsufficient(item.name, freshStock, item.unit),
+        KB.cancelKeyboard
+      );
+    }
+
+    await removeStock({
+      businessId: biz.businessId,
+      itemId:     item.id,
+      quantity:   data.consumeQty,
+      unit:       item.unit,
+      note,
+      telegramId: ctx.from.id,
+    });
+
+    const newStock = await getItemStock(biz.businessId, item.id);
+    session.step = 'inventory_menu';
+    session.data = {};
+    return ctx.reply(
+      MSG.consumeSaved(item.name, data.consumeQty, item.unit, newStock),
+      KB.inventoryMenuKeyboard()
+    );
+  }
+}
+
+// ─── جریان اصلاح موجودی ──────────────────────────────────────────────────────
+async function handleInventoryAdjustStep(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const { step, data } = session;
+  const biz = session.biz;
+
+  if (step === 'inventory_adjust_select') {
+    const items = data.inventoryItems || [];
+    const idx   = parseMemberIndex(text);
+    if (idx < 0 || idx >= items.length) {
+      return ctx.reply(MSG.selectInventoryItem, KB.inventoryItemSelectKeyboard(items));
+    }
+    const item = items[idx];
+    data.selectedItem = item;
+    data.currentStock = Number(item.stock) || 0;
+    session.step = 'inventory_adjust_qty';
+    return ctx.reply(
+      MSG.askAdjustQty(item.name, item.unit, data.currentStock),
+      { parse_mode: 'Markdown', ...KB.cancelKeyboard }
+    );
+  }
+
+  if (step === 'inventory_adjust_qty') {
+    const n = parseNumber(text);
+    if (n === null || n < 0) return ctx.reply(MSG.invalidNumber, KB.cancelKeyboard);
+    const item         = data.selectedItem;
+    const actualQty    = n;
+    const currentStock = data.currentStock;
+    const diff         = actualQty - currentStock;
+
+    await adjustStock({
+      businessId:  biz.businessId,
+      itemId:      item.id,
+      actualQty,
+      unit:        item.unit,
+      note:        'اصلاح دستی موجودی',
+      telegramId:  ctx.from.id,
+    });
+
+    session.step = 'inventory_menu';
+    session.data = {};
+    return ctx.reply(
+      MSG.adjustSaved(item.name, currentStock, actualQty, diff, item.unit),
+      KB.inventoryMenuKeyboard()
+    );
+  }
+}
+
+// ─── خروجی CSV انبار ─────────────────────────────────────────────────────────
+async function handleInventoryCsvExport(ctx) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  if (!hasPermission(biz, 'inventory.view')) {
+    return ctx.reply(MSG.permissionDenied, KB.exportMenuKeyboard());
+  }
+  await ctx.reply(MSG.exportGenerating);
+  const rows = await getAllInventoryForExport(biz?.businessId);
+  if (rows.length === 0) return ctx.reply(MSG.exportEmptyInventory);
+  const csv = '﻿' + buildInventoryCsv(rows);
+  const tmpPath = path.join(os.tmpdir(), `icebox_inventory_${Date.now()}.csv`);
+  fs.writeFileSync(tmpPath, csv, 'utf8');
+  try {
+    await ctx.replyWithDocument(
+      { source: fs.createReadStream(tmpPath), filename: 'inventory_export.csv' },
+      { caption: `📦 خروجی انبار — ${rows.length} ماده اولیه` }
+    );
+  } finally {
+    try { fs.unlinkSync(tmpPath); } catch (_) {}
+  }
+}
+
 // ─── خروجی CSV خریدها ─────────────────────────────────────────────────────────
 async function handlePurchasesCsvExport(ctx) {
   const session = getSession(ctx.from.id);
@@ -2222,6 +2583,7 @@ async function handleText(ctx) {
     if (text === '⚙️ تنظیمات')          return startSettings(ctx);
     if (text === '📤 خروجی اطلاعات')   return startExportMenu(ctx);
     if (text === '🏭 تأمین‌کننده‌ها')    return startSupplierMenu(ctx);
+    if (text === '📦 انبار')             return startInventoryMenu(ctx);
     if (text === '❓ راهنما') {
       return ctx.reply(MSG.help, { parse_mode: 'Markdown', ...getMenu(session) });
     }
@@ -2272,10 +2634,16 @@ async function handleText(ctx) {
   if (session.step === 'expense_detail_period') return handleExpenseDetailPeriod(ctx, text);
 
   // ── تأمین‌کننده‌ها (Phase 8) ────────────────────────────────────────────────
-  if (session.step === 'supplier_menu')                   return handleSupplierMenu(ctx, text);
+  if (session.step === 'supplier_menu')                         return handleSupplierMenu(ctx, text);
   if (session.step && session.step.startsWith('supplier_add_')) return handleSupplierStep(ctx, text);
-  if (session.step && session.step.startsWith('purchase_'))    return handlePurchaseStep(ctx, text);
-  if (session.step && session.step.startsWith('supp_pay_'))    return handleSuppPaymentStep(ctx, text);
+  if (session.step && session.step.startsWith('purchase_'))     return handlePurchaseStep(ctx, text);
+  if (session.step && session.step.startsWith('supp_pay_'))     return handleSuppPaymentStep(ctx, text);
+
+  // ── انبار مواد اولیه (Phase 8C) ────────────────────────────────────────────
+  if (session.step === 'inventory_menu')                            return handleInventoryMenu(ctx, text);
+  if (session.step && session.step.startsWith('inventory_add_'))    return handleInventoryAddStep(ctx, text);
+  if (session.step && session.step.startsWith('inventory_consume_')) return handleInventoryConsumeStep(ctx, text);
+  if (session.step && session.step.startsWith('inventory_adjust_')) return handleInventoryAdjustStep(ctx, text);
 
   // ── تنظیمات و خروجی ────────────────────────────────────────────────────────
   if (session.step === 'settings_menu') return handleSettingsMenu(ctx, text);
