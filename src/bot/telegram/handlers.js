@@ -39,6 +39,7 @@ const { createLicense, getLicenseByCode, getAllLicenses, activateLicense } = req
 const {
   addTeamMember, getTeamMembers, getAllTeamMembers,
   updateMemberRole, deactivateMember, activateMember,
+  getInactiveMembership,
   DEFAULT_PERMISSIONS, ROLE_LABELS,
 } = require('../../core/teamService');
 const {
@@ -197,8 +198,16 @@ async function handleStart(ctx) {
 
   const biz = await ensureBizContext(ctx);
   if (!biz) {
+    // بررسی: آیا کاربر قبلاً عضو تیم بوده اما غیرفعال شده؟
+    if (!isSuperAdmin(ctx)) {
+      const inactive = await getInactiveMembership(tgUser.id);
+      if (inactive) {
+        return ctx.reply(MSG.memberInactive, KB.cancelKeyboard);
+      }
+    }
+    // کاربر جدید — نمایش آیدی + درخواست لایسنس
     session.step = 'register_license';
-    return ctx.reply(MSG.licensePrompt, KB.cancelKeyboard);
+    return ctx.reply(MSG.newUserWelcome(tgUser.id), { parse_mode: 'Markdown', ...KB.cancelKeyboard });
   }
 
   return ctx.reply(
@@ -1425,14 +1434,15 @@ async function handleLockMenu(ctx, text) {
   const biz = session.biz;
 
   // نام بخش از دکمه (🔒 گزارش‌ها یا 🔓 گزارش‌ها)
+  // توجه: regex با پرچم u برای emoji‌های خارج از BMP (مثل 🔒 U+1F512) الزامی است
   const SECTION_LABELS_MAP = {
-    'گزارش‌ها':        'reports',
-    'خروجی':          'exports',
-    'مدیریت ثبت‌ها':   'manage_records',
-    'تنظیمات':        'settings',
-    'ثبت خرج':        'expenses',
+    'گزارش‌ها':          'reports',
+    'خروجی اطلاعات':     'exports',
+    'مدیریت ثبت‌ها':     'manage_records',
+    'تنظیمات':          'settings',
+    'مخارج':            'expenses',
   };
-  const cleanText = text.replace(/^[🔒🔓]\s*/, '');
+  const cleanText = text.replace(/^[🔒🔓]\s*/u, '');
   const sectionKey = SECTION_LABELS_MAP[cleanText];
 
   if (!sectionKey) {
@@ -1652,6 +1662,12 @@ async function handleText(ctx) {
   const text   = ctx.message.text;
   const userId = ctx.from.id;
   const session = getSession(userId);
+
+  // ── بارگذاری biz context اگر موجود نیست (مثلاً بعد از restart سرور) ─────────
+  // super_admin باید همیشه منوی کامل را داشته باشد، حتی بدون /start مجدد
+  if (!session.biz && isSuperAdmin(ctx)) {
+    await ensureBizContext(ctx);
+  }
 
   // ── جریان ثبت‌نام (کاربر بدون کسب‌وکار) ──────────────────────────────────
   if (!session.biz && !isSuperAdmin(ctx)) {

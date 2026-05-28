@@ -109,6 +109,23 @@ async function activateMember(businessId, userId) {
   return result.rows[0] || null;
 }
 
+// ─── بررسی عضویت غیرفعال برای یک telegram_id ────────────────────────────────
+// اگر کاربر در یک کسب‌وکار فعال عضو بوده اما is_active = 0 شده، این تابع رکورد را برمی‌گرداند.
+// در /start برای نمایش پیام «حساب شما غیرفعال شده» به جای درخواست لایسنس استفاده می‌شود.
+async function getInactiveMembership(telegramId) {
+  const result = await query(`
+    SELECT bu.id, b.name AS business_name
+    FROM business_users bu
+    JOIN users u  ON bu.user_id     = u.id
+    JOIN businesses b ON bu.business_id = b.id
+    WHERE u.telegram_id = $1
+      AND bu.is_active = 0
+      AND b.is_active  = 1
+    LIMIT 1
+  `, [telegramId]);
+  return result.rows[0] || null;
+}
+
 // ─── بارگذاری biz context با آیدی تلگرام ─────────────────────────────────────
 async function getBizContextByTelegramId(telegramId) {
   const result = await query(`
@@ -140,6 +157,7 @@ module.exports = {
   updateMemberRole,
   deactivateMember,
   activateMember,
+  getInactiveMembership,
   getBizContextByTelegramId,
   DEFAULT_PERMISSIONS,
   ROLE_LABELS,

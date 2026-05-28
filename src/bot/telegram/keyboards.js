@@ -287,10 +287,10 @@ function licenseMenuKeyboard() {
 function lockSectionKeyboard(lockedSections) {
   const LABELS = {
     reports:        'گزارش‌ها',
-    exports:        'خروجی',
+    exports:        'خروجی اطلاعات',
     manage_records: 'مدیریت ثبت‌ها',
     settings:       'تنظیمات',
-    expenses:       'ثبت خرج',
+    expenses:       'مخارج',
   };
   const ALL = ['reports', 'exports', 'manage_records', 'settings', 'expenses'];
   const rows = ALL.map(s => [
