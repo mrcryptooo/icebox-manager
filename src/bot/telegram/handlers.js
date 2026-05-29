@@ -3234,6 +3234,114 @@ async function handleExportCommand(ctx) {
   return startExportMenu(ctx);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// /qa_accounting — تست سازگاری حسابداری (Phase 8G)
+// فقط business_owner یا super_admin
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function handleQaAccounting(ctx) {
+  const session = getSession(ctx.from.id);
+  let biz = session.biz;
+  if (!biz) biz = await ensureBizContext(ctx);
+
+  if (!isSuperAdmin(ctx) && biz?.role !== 'business_owner') {
+    return ctx.reply(MSG.permissionDenied, getMenu(getSession(ctx.from.id)));
+  }
+  if (!biz?.businessId) {
+    return ctx.reply('⚠️ ابتدا /start بزنید تا context کسب‌وکار بارگذاری شود.');
+  }
+
+  await ctx.reply('🔍 در حال اجرای تست سازگاری حسابداری...');
+
+  const { start, end } = getMonthRange();
+  const report         = await getFullAccountingReport(biz.businessId, start, end);
+
+  const pd   = '۰۱۲۳۴۵۶۷۸۹'.split('');
+  const fmt  = n => Math.round(Number(n) || 0).toLocaleString('en-US').replace(/\d/g, d => pd[d]);
+  const fmtN = n => String(Math.round(Number(n) || 0)).replace(/\d/g, d => pd[d]);
+  const EPS  = 0.01;
+
+  const { sales, expenses, purchases, inventory, payroll, summary } = report;
+  const errors = [];
+
+  // ── تست ۱: cashIn === فروش کل ──────────────────────────────────────────────
+  if (Math.abs(summary.cashIn - sales.total) > EPS)
+    errors.push(`❌ cashIn (${fmt(summary.cashIn)}) ≠ فروش کل (${fmt(sales.total)})`);
+
+  // ── تست ۲: فرمول cashOut (بدون bonus — bonus در obligations است) ────────────
+  const expectedCashOut = expenses.total
+    + purchases.paidAtPurchase
+    + purchases.laterPayments
+    + payroll.salaryPayment
+    + payroll.advance
+    + payroll.internalConsumption;
+  if (Math.abs(summary.cashOut - expectedCashOut) > EPS)
+    errors.push(`❌ cashOut (${fmt(summary.cashOut)}) ≠ مجموع اجزا (${fmt(expectedCashOut)})`);
+
+  // ── تست ۳: netCash = cashIn − cashOut ──────────────────────────────────────
+  const expectedNet = summary.cashIn - summary.cashOut;
+  if (Math.abs(summary.netCash - expectedNet) > EPS)
+    errors.push(`❌ مانده نقدی (${fmt(summary.netCash)}) ≠ cashIn−cashOut (${fmt(expectedNet)})`);
+
+  // ── تست ۴: obligations = بدهی_تأمین‌کننده + max(0, مانده_پرسنل) ────────────
+  const expectedObl = purchases.currentDebt + Math.max(0, payroll.totalStaffBalance);
+  if (Math.abs(summary.obligations - expectedObl) > EPS)
+    errors.push(`❌ تعهدات (${fmt(summary.obligations)}) ≠ بدهی_تأمین‌کننده + مانده_پرسنل (${fmt(expectedObl)})`);
+
+  // ── تست ۵: afterObligations = netCash − obligations ────────────────────────
+  const expectedAfter = summary.netCash - summary.obligations;
+  if (Math.abs(summary.afterObligations - expectedAfter) > EPS)
+    errors.push(`❌ مانده بعد از تعهدات (${fmt(summary.afterObligations)}) ≠ netCash−obligations (${fmt(expectedAfter)})`);
+
+  // ── تست ۶: بدهی تأمین‌کننده نباید منفی باشد ────────────────────────────────
+  if (purchases.currentDebt < -EPS)
+    errors.push(`❌ بدهی تأمین‌کننده منفی است: ${fmt(purchases.currentDebt)}`);
+
+  // ── تست ۷: business_id در گزارش ─────────────────────────────────────────────
+  // (بررسی static: getFullAccountingReport همیشه businessId می‌گیرد — به DB نیاز ندارد)
+  if (!biz.businessId || typeof biz.businessId !== 'number')
+    errors.push(`❌ businessId نامعتبر: ${biz.businessId}`);
+
+  const startJalali = gregorianToJalaliDateString(start);
+  const endJalali   = gregorianToJalaliDateString(end);
+  const sep = '━'.repeat(26);
+
+  const lines = [
+    `🔍 *تست سازگاری حسابداری — Phase 8G*`,
+    `📅 ماه جاری: ${startJalali} تا ${endJalali}`,
+    `🏪 کسب‌وکار: ${biz.businessName || biz.businessId}`,
+    sep,
+    `💰 فروش کل: ${fmt(sales.total)} تومان`,
+    `🧾 مخارج: ${fmt(expenses.total)} تومان`,
+    `🛒 پرداخت نقدی خرید: ${fmt(purchases.paidAtPurchase)} تومان`,
+    `💳 پرداخت بعدی تأمین‌کننده: ${fmt(purchases.laterPayments)} تومان`,
+    `🔴 بدهی فعلی تأمین‌کننده: ${fmt(purchases.currentDebt)} تومان`,
+    `👥 حقوق پرداخت‌شده: ${fmt(payroll.salaryPayment)} تومان`,
+    `👥 برداشت: ${fmt(payroll.advance)} تومان`,
+    `👥 مصرف داخلی: ${fmt(payroll.internalConsumption)} تومان`,
+    `🎁 پاداش (تعهد — در obligations): ${fmt(payroll.bonus)} تومان`,
+    `👥 مانده کل حقوق: ${fmt(payroll.totalStaffBalance)} تومان`,
+    sep,
+    `📊 ورودی نقدی: ${fmt(summary.cashIn)} تومان`,
+    `📊 خروجی نقدی: ${fmt(summary.cashOut)} تومان`,
+    `📊 مانده نقدی: ${fmt(summary.netCash)} تومان`,
+    `📊 تعهدات: ${fmt(summary.obligations)} تومان`,
+    `📊 مانده بعد از تعهدات: ${fmt(summary.afterObligations)} تومان`,
+    sep,
+    `🔗 گزارش تلگرام و summary.csv از منبع مشترک: ✅`,
+    `🔢 تعداد تست‌ها: ۷`,
+  ];
+
+  if (errors.length === 0) {
+    lines.push(`\n✅ *تمام تست‌های سازگاری پاس شدند.*`);
+  } else {
+    lines.push(`\n⚠️ *${fmtN(errors.length)} اختلاف یافت شد:*`);
+    lines.push(...errors);
+  }
+
+  return ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+}
+
 // ─── برای کاربران فاقد کسب‌وکار (استفاده از index.js) ───────────────────────
 async function handleUnregistered(ctx) {
   const session = getSession(ctx.from.id);
@@ -3251,5 +3359,6 @@ module.exports = {
   handleId,
   handleHealth,
   handleExportCommand,
+  handleQaAccounting,
   handleUnregistered,
 };

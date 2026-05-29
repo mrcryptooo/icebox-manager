@@ -234,14 +234,18 @@ async function getFullAccountingReport(businessId, startDate, endDate) {
   };
 
   // ── ۶. جمع‌بندی ──────────────────────────────────────────────────────────────
+  // cashOut = پول‌هایی که واقعاً از کسب‌وکار خارج شده (پرداخت‌شده)
+  // bonus در cashOut نیست چون تعهد (accrual) است، نه پرداخت نقدی.
+  // bonus در totalStaffBalance → obligations حساب می‌شود.
+  // برای ثبت پرداخت نقدی پاداش، از نوع «پرداخت حقوق» (salary_payment) استفاده کنید.
   const cashIn  = sales.total;
   const cashOut = expenses.total
     + purchases.paidAtPurchase
     + purchases.laterPayments
     + payroll.salaryPayment
     + payroll.advance
-    + payroll.internalConsumption
-    + payroll.bonus;
+    + payroll.internalConsumption;
+  // deduction از cashOut خارج نیست چون کسری = کاهش تعهد، نه خروج نقد
   const netCash          = cashIn - cashOut;
   const obligations      = purchases.currentDebt + Math.max(0, payroll.totalStaffBalance);
   const afterObligations = netCash - obligations;

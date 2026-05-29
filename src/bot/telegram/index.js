@@ -1,6 +1,6 @@
 require('dotenv').config();
 const { Telegraf } = require('telegraf');
-const { handleStart, handleText, handleId, handleHealth, handleExportCommand } = require('./handlers');
+const { handleStart, handleText, handleId, handleHealth, handleExportCommand, handleQaAccounting } = require('./handlers');
 const { initDatabase } = require('../../db/database');
 const MSG = require('./messages');
 
@@ -83,9 +83,10 @@ async function main() {
   // کنترل دسترسی per-operation در handlers.js انجام می‌شود.
   // کاربران جدید باید بتوانند /start بزنند و وارد flow فعال‌سازی لایسنس شوند.
   bot.start(handleStart);
-  bot.command('menu',   handleStart);
-  bot.command('health', handleHealth);
-  bot.command('export', handleExportCommand);
+  bot.command('menu',          handleStart);
+  bot.command('health',        handleHealth);
+  bot.command('export',        handleExportCommand);
+  bot.command('qa_accounting', handleQaAccounting);
 
   bot.on('text', handleText);
 
