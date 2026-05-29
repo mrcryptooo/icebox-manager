@@ -178,6 +178,7 @@ function reportsMenuKeyboard() {
     ['🗓️ گزارش ماهانه', '🏪 گزارش شعبه'],
     ['🔁 مقایسه شعبه‌ها', '📆 بازه دلخواه'],
     ['🧾 گزارش ریز مخارج'],
+    ['📊 گزارش حسابداری کامل'],
     ['🏠 منوی اصلی'],
   ]).resize();
 }
@@ -336,6 +337,7 @@ function permissionsKeyboard(perms) {
     'supplier_payments.create', 'supplier_accounts.view',
     'inventory.view',     'inventory.manage',    'inventory.consume', 'inventory.adjust',
     'payroll.view',       'payroll.manage',      'payroll.pay',       'payroll.adjust',
+    'accounting.view',
   ];
   const LBL = {
     'sales.create': 'ثبت فروش', 'sales.view': 'مشاهده فروش',
@@ -358,6 +360,7 @@ function permissionsKeyboard(perms) {
     'payroll.manage':  'مدیریت حقوق پرسنل',
     'payroll.pay':     'ثبت پرداخت حقوق',
     'payroll.adjust':  'اصلاح حساب پرسنل',
+    'accounting.view': 'گزارش حسابداری کامل',
   };
   const rows = ALL.map(p => [`${permsArr.includes(p) ? '✅' : '❌'} ${LBL[p]}`]);
   rows.push(['🔄 بازگردانی پیش‌فرض نقش']);

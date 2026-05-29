@@ -42,6 +42,7 @@ const {
   getAllStaffAccountSummaries, getMonthlyPayrollReport,
   getAllStaffTransactionsForExport,
 } = require('../../core/payrollService');
+const { getFullAccountingReport } = require('../../core/accountingService');
 const {
   createInventoryItem, listInventoryItems, getInventoryItemById,
   findInventoryItemByName, createInventoryMovement,
@@ -552,6 +553,10 @@ async function startReportsMenu(ctx) {
 async function handleReportsMenu(ctx, text) {
   const session = getSession(ctx.from.id);
   const biz = session.biz;
+
+  // گزارش حسابداری کامل — نیاز به شعبه ندارد، باید قبل از بررسی شعبه‌ها بیاید
+  if (text === '📊 گزارش حسابداری کامل') return startAccountingReport(ctx);
+
   const branches = await getAllBranches(biz?.businessId);
   if (branches.length === 0) {
     clearSession(ctx.from.id);
@@ -724,6 +729,17 @@ async function finalizeDatePicker(ctx) {
   const session = getSession(ctx.from.id);
   const { datePickerFlow, startDate, endDate, startJalali, endJalali, scope, branchId } = session.data;
   const biz = session.biz;
+
+  // ── گزارش حسابداری کامل (Phase 8E) ──────────────────────────────────────
+  if (datePickerFlow === 'accounting') {
+    await ctx.reply(MSG.exportGenerating);
+    const report = await getFullAccountingReport(biz?.businessId, startDate, endDate);
+    clearSession(ctx.from.id);
+    return ctx.reply(
+      MSG.accountingReport(report, startJalali || gregorianToJalaliDateString(startDate), endJalali || gregorianToJalaliDateString(endDate)),
+      { parse_mode: 'Markdown', ...getMenu(getSession(ctx.from.id)) }
+    );
+  }
 
   // ── گزارش ریز مخارج (Phase 8) ────────────────────────────────────────────
   if (datePickerFlow === 'expense_detail') {
@@ -2513,6 +2529,61 @@ async function handleInventoryCsvExport(ctx) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// گزارش حسابداری کامل (Phase 8E)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function startAccountingReport(ctx) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  if (!hasPermission(biz, 'accounting.view')) {
+    return ctx.reply(MSG.permissionDenied, KB.reportsMenuKeyboard());
+  }
+  session.step = 'accounting_period';
+  session.data = {};
+  return ctx.reply(MSG.accountingPeriodMenu, { parse_mode: 'Markdown', ...KB.periodKeyboard() });
+}
+
+async function handleAccountingPeriodPick(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+
+  let startDate, endDate, startJalali, endJalali;
+
+  if (text === '📊 امروز') {
+    const today = getTodayDate();
+    startDate   = today;
+    endDate     = today;
+    startJalali = gregorianToJalaliDateString(today);
+    endJalali   = startJalali;
+  } else if (text === '📅 این هفته') {
+    const r   = getWeekRange();
+    startDate = r.start;
+    endDate   = r.end;
+    startJalali = gregorianToJalaliDateString(r.start);
+    endJalali   = gregorianToJalaliDateString(r.end);
+  } else if (text === '🗓️ این ماه') {
+    const r   = getMonthRange();
+    startDate = r.start;
+    endDate   = r.end;
+    startJalali = gregorianToJalaliDateString(r.start);
+    endJalali   = gregorianToJalaliDateString(r.end);
+  } else if (text === '📆 بازه دلخواه') {
+    session.data.datePickerFlow = 'accounting';
+    return startPickingDate(ctx, 'start');
+  } else {
+    return ctx.reply(MSG.accountingPeriodMenu, { parse_mode: 'Markdown', ...KB.periodKeyboard() });
+  }
+
+  await ctx.reply(MSG.exportGenerating);
+  const report = await getFullAccountingReport(biz.businessId, startDate, endDate);
+  clearSession(ctx.from.id);
+  return ctx.reply(
+    MSG.accountingReport(report, startJalali, endJalali),
+    { parse_mode: 'Markdown', ...getMenu(getSession(ctx.from.id)) }
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // حساب پرسنل (Phase 8D)
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -2899,6 +2970,7 @@ async function handleText(ctx) {
 
   // ── منوی گزارش‌ها ──────────────────────────────────────────────────────────
   if (session.step === 'reports_menu')         return handleReportsMenu(ctx, text);
+  if (session.step === 'accounting_period')    return handleAccountingPeriodPick(ctx, text);
   if (session.step === 'compare_period')       return handleComparePeriod(ctx, text);
   if (session.step === 'datepick_month')       return handleDatepickMonth(ctx, text);
   if (session.step === 'datepick_day')         return handleDatepickDay(ctx, text);

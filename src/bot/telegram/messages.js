@@ -1032,6 +1032,119 @@ const MSG = {
     return lines.join('\n');
   },
 
+  // ─── گزارش حسابداری کامل (Phase 8E) ──────────────────────────────────────────
+  accountingPeriodMenu:
+    '📊 *گزارش حسابداری کامل*\n\nبازه زمانی را انتخاب کنید:',
+
+  accountingReport: (report, startJalali, endJalali) => {
+    const pd  = '۰۱۲۳۴۵۶۷۸۹'.split('');
+    const fmt = n => Math.round(Number(n) || 0).toLocaleString('en-US').replace(/\d/g, d => pd[d]);
+    const fmtN = n => String(Math.round(Number(n) || 0)).replace(/\d/g, d => pd[d]);
+    const sep  = '━'.repeat(24);
+    const thin = '─'.repeat(24);
+
+    const { sales, expenses, purchases, inventory, payroll, summary } = report;
+
+    // ── فروش ──────────────────────────────────────────────────────────────────
+    const salesLines = [
+      `${sep}`,
+      `💰 *فروش*`,
+      `فروش کل: ${fmt(sales.total)} تومان`,
+      `  💵 نقدی: ${fmt(sales.cash)}`,
+      `  💳 پوز: ${fmt(sales.pos)}`,
+      `  🔄 کارت‌به‌کارت: ${fmt(sales.cardTransfer)}`,
+      `  🌐 آنلاین: ${fmt(sales.online)}`,
+      `تعداد سفارش: ${fmtN(sales.orderCount)}`,
+      `میانگین هر سفارش: ${fmt(sales.avgOrderValue)} تومان`,
+    ];
+
+    // ── مخارج ─────────────────────────────────────────────────────────────────
+    const expLines = [
+      `${sep}`,
+      `🧾 *مخارج*`,
+      `کل مخارج: ${fmt(expenses.total)} تومان`,
+    ];
+    if (expenses.topCategory) {
+      expLines.push(`بیشترین دسته: ${expenses.topCategory.category} — ${fmt(expenses.topCategory.total)} تومان`);
+    }
+    if (expenses.categories.length > 1) {
+      expenses.categories.slice(1).forEach(c => {
+        expLines.push(`  • ${c.category}: ${fmt(c.total)} تومان`);
+      });
+    }
+
+    // ── تأمین‌کنندگان ──────────────────────────────────────────────────────────
+    const suppLines = [
+      `${sep}`,
+      `🏭 *تأمین‌کننده‌ها*`,
+      `کل خرید مواد: ${fmt(purchases.totalAmount)} تومان`,
+      `پرداخت هنگام خرید: ${fmt(purchases.paidAtPurchase)} تومان`,
+      `پرداخت‌های بعدی: ${fmt(purchases.laterPayments)} تومان`,
+    ];
+    if (purchases.currentDebt > 0) {
+      suppLines.push(`🔴 بدهی فعلی تأمین‌کننده‌ها: ${fmt(purchases.currentDebt)} تومان`);
+      suppLines.push(`تعداد تأمین‌کننده بدهکار: ${fmtN(purchases.debtorCount)}`);
+    } else {
+      suppLines.push(`✅ بدهی تأمین‌کننده: تسویه‌شده`);
+    }
+
+    // ── انبار ─────────────────────────────────────────────────────────────────
+    const invLines = [
+      `${sep}`,
+      `📦 *انبار*`,
+      `تعداد اقلام فعال: ${fmtN(inventory.totalItems)}`,
+      inventory.lowStockCount > 0
+        ? `⚠️ اقلام کم‌موجودی: ${fmtN(inventory.lowStockCount)}`
+        : `✅ همه اقلام موجودی کافی دارند`,
+    ];
+
+    // ── پرسنل ─────────────────────────────────────────────────────────────────
+    const payLines = [
+      `${sep}`,
+      `👥 *پرسنل*`,
+      `حقوق پرداخت‌شده: ${fmt(payroll.salaryPayment)} تومان`,
+      `برداشت‌ها: ${fmt(payroll.advance)} تومان`,
+      `مصرف داخلی: ${fmt(payroll.internalConsumption)} تومان`,
+      `پاداش: ${fmt(payroll.bonus)} تومان`,
+      `کسری: ${fmt(payroll.deduction)} تومان`,
+    ];
+    if (payroll.totalStaffBalance > 0) {
+      payLines.push(`🔴 مانده کل حقوق پرسنل: ${fmt(payroll.totalStaffBalance)} تومان`);
+    } else if (payroll.totalStaffBalance < 0) {
+      payLines.push(`✅ مانده کل حقوق پرسنل: ${fmt(payroll.totalStaffBalance)} تومان`);
+    } else {
+      payLines.push(`✅ حقوق پرسنل تسویه‌شده`);
+    }
+
+    // ── جمع‌بندی ───────────────────────────────────────────────────────────────
+    const netSign   = summary.netCash          >= 0 ? '🟢' : '🔴';
+    const afterSign = summary.afterObligations >= 0 ? '🟢' : '🔴';
+    const sumLines  = [
+      `${sep}`,
+      `📌 *جمع‌بندی مدیریتی*`,
+      `ورودی (فروش): ${fmt(summary.cashIn)} تومان`,
+      `خروجی پرداخت‌شده: ${fmt(summary.cashOut)} تومان`,
+      `${thin}`,
+      `${netSign} *مانده نقدی تقریبی: ${fmt(summary.netCash)} تومان*`,
+      `${thin}`,
+      `تعهدات پرداخت‌نشده: ${fmt(summary.obligations)} تومان`,
+      `  بدهی تأمین‌کننده‌ها: ${fmt(purchases.currentDebt)} تومان`,
+      `  مانده حقوق پرسنل: ${fmt(Math.max(0, payroll.totalStaffBalance))} تومان`,
+      `${thin}`,
+      `${afterSign} *مانده بعد از تعهدات: ${fmt(summary.afterObligations)} تومان*`,
+      `${sep}`,
+      `⚠️ _این گزارش تقریبی مدیریتی است، نه گزارش رسمی مالیاتی._`,
+    ];
+
+    const header = [
+      `📊 *گزارش حسابداری کامل*`,
+      `📅 از ${startJalali} تا ${endJalali}`,
+    ];
+
+    return [...header, ...salesLines, ...expLines, ...suppLines,
+            ...invLines, ...payLines, ...sumLines].join('\n');
+  },
+
   inventoryMovements: (movements) => {
     const pd        = '۰۱۲۳۴۵۶۷۸۹'.split('');
     const fmt       = n => String(Math.round(Math.abs(Number(n)) || 0)).replace(/\d/g, d => pd[d]);

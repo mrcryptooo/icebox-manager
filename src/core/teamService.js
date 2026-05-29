@@ -20,6 +20,7 @@ const DEFAULT_PERMISSIONS = {
     'purchases.view', 'supplier_payments.create', 'supplier_accounts.view',
     'inventory.view',
     'payroll.view', 'payroll.pay',
+    'accounting.view',
   ],
 };
 
@@ -33,6 +34,7 @@ const ALL_PERMISSIONS = [
   'supplier_payments.create', 'supplier_accounts.view',
   'inventory.view',     'inventory.manage',    'inventory.consume', 'inventory.adjust',
   'payroll.view',       'payroll.manage',      'payroll.pay',       'payroll.adjust',
+  'accounting.view',
 ];
 
 // ─── نام فارسی permissionها ────────────────────────────────────────────────────
@@ -64,6 +66,7 @@ const PERMISSION_LABELS = {
   'payroll.manage':           'مدیریت حقوق پرسنل',
   'payroll.pay':              'ثبت پرداخت حقوق',
   'payroll.adjust':           'اصلاح حساب پرسنل',
+  'accounting.view':          'گزارش حسابداری کامل',
 };
 
 // ─── نام فارسی نقش‌ها ─────────────────────────────────────────────────────────
