@@ -34,6 +34,12 @@ const {
   getAllSalesForExport, getAllExpensesForExport,
   buildSalesCsv, buildExpensesCsv, buildPurchasesCsv, buildInventoryCsv,
   buildStaffTransactionsCsv,
+  // Phase 8F — خروجی حسابداری کامل
+  getSalesForRangeExport, getExpensesForRangeExport,
+  getSupplierPurchasesForRangeExport, getSupplierPaymentsForRangeExport,
+  getPayrollTransactionsForRangeExport,
+  buildAccountingSummaryCsv, buildSalesRangeCsv, buildExpensesRangeCsv,
+  buildSupplierPurchasesRangeCsv, buildSupplierPaymentsRangeCsv, buildPayrollRangeCsv,
 } = require('../../core/exportService');
 const {
   TRANSACTION_TYPE_LABELS, SALARY_TYPE_LABELS,
@@ -738,6 +744,15 @@ async function finalizeDatePicker(ctx) {
     return ctx.reply(
       MSG.accountingReport(report, startJalali || gregorianToJalaliDateString(startDate), endJalali || gregorianToJalaliDateString(endDate)),
       { parse_mode: 'Markdown', ...getMenu(getSession(ctx.from.id)) }
+    );
+  }
+
+  // ── خروجی حسابداری کامل (Phase 8F) ──────────────────────────────────────
+  if (datePickerFlow === 'accounting_export') {
+    return handleAccountingFullExportSend(
+      ctx, biz?.businessId, startDate, endDate,
+      startJalali || gregorianToJalaliDateString(startDate),
+      endJalali   || gregorianToJalaliDateString(endDate)
     );
   }
 
@@ -1793,11 +1808,12 @@ async function handlePinVerify(ctx, text) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function handleExportMenuChoice(ctx, text) {
-  if (text === '📊 خروجی فروش‌ها')         return handleSalesCsvExport(ctx);
-  if (text === '💰 خروجی مخارج')            return handleExpensesCsvExport(ctx);
-  if (text === '🛒 خروجی خریدهای مواد')     return handlePurchasesCsvExport(ctx);
-  if (text === '📦 خروجی انبار')            return handleInventoryCsvExport(ctx);
-  if (text === '📋 خروجی حقوق پرسنل')      return handleStaffTransactionsCsvExport(ctx);
+  if (text === '📊 خروجی فروش‌ها')           return handleSalesCsvExport(ctx);
+  if (text === '💰 خروجی مخارج')              return handleExpensesCsvExport(ctx);
+  if (text === '🛒 خروجی خریدهای مواد')       return handlePurchasesCsvExport(ctx);
+  if (text === '📦 خروجی انبار')              return handleInventoryCsvExport(ctx);
+  if (text === '📋 خروجی حقوق پرسنل')        return handleStaffTransactionsCsvExport(ctx);
+  if (text === '📊 خروجی حسابداری کامل')     return startAccountingExport(ctx);
   return ctx.reply(MSG.exportMenu, { parse_mode: 'Markdown', ...KB.exportMenuKeyboard() });
 }
 
@@ -2584,6 +2600,154 @@ async function handleAccountingPeriodPick(ctx, text) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// خروجی حسابداری کامل (Phase 8F)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function startAccountingExport(ctx) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+  const hasPerm = hasPermission(biz, 'accounting.view') ||
+                  hasPermission(biz, 'exports.create')  ||
+                  (Array.isArray(biz?.permissions) && biz.permissions.includes('*'));
+  if (!hasPerm) {
+    return ctx.reply(MSG.permissionDenied, KB.exportMenuKeyboard());
+  }
+  session.step = 'accounting_export_period';
+  session.data = {};
+  return ctx.reply(MSG.accountingExportPeriodMenu, { parse_mode: 'Markdown', ...KB.periodKeyboard() });
+}
+
+async function handleAccountingExportPeriod(ctx, text) {
+  const session = getSession(ctx.from.id);
+  const biz = session.biz;
+
+  let startDate, endDate, startJalali, endJalali;
+
+  if (text === '📊 امروز') {
+    const today = getTodayDate();
+    startDate   = today;
+    endDate     = today;
+    startJalali = gregorianToJalaliDateString(today);
+    endJalali   = startJalali;
+  } else if (text === '📅 این هفته') {
+    const r     = getWeekRange();
+    startDate   = r.start;
+    endDate     = r.end;
+    startJalali = gregorianToJalaliDateString(r.start);
+    endJalali   = gregorianToJalaliDateString(r.end);
+  } else if (text === '🗓️ این ماه') {
+    const r     = getMonthRange();
+    startDate   = r.start;
+    endDate     = r.end;
+    startJalali = gregorianToJalaliDateString(r.start);
+    endJalali   = gregorianToJalaliDateString(r.end);
+  } else if (text === '📆 بازه دلخواه') {
+    session.data.datePickerFlow = 'accounting_export';
+    return startPickingDate(ctx, 'start');
+  } else {
+    return ctx.reply(MSG.accountingExportPeriodMenu, { parse_mode: 'Markdown', ...KB.periodKeyboard() });
+  }
+
+  return handleAccountingFullExportSend(ctx, biz.businessId, startDate, endDate, startJalali, endJalali);
+}
+
+async function handleAccountingFullExportSend(ctx, businessId, startDate, endDate, startJalali, endJalali) {
+  await ctx.reply(MSG.accountingExportGenerating);
+
+  const ts = Date.now();
+  const tmpFiles = [];
+
+  try {
+    // ── ۱. خلاصه حسابداری ─────────────────────────────────────────────────
+    const report = await getFullAccountingReport(businessId, startDate, endDate);
+    const summaryCsv  = '﻿' + buildAccountingSummaryCsv(report, startJalali, endJalali);
+    const summaryPath = path.join(os.tmpdir(), `icebox_summary_${ts}.csv`);
+    fs.writeFileSync(summaryPath, summaryCsv, 'utf8');
+    tmpFiles.push(summaryPath);
+    await ctx.replyWithDocument(
+      { source: fs.createReadStream(summaryPath), filename: 'summary.csv' },
+      { caption: `📊 خلاصه حسابداری — ${startJalali} تا ${endJalali}` }
+    );
+
+    // ── ۲. فروش‌ها ────────────────────────────────────────────────────────
+    const salesRows = await getSalesForRangeExport(businessId, startDate, endDate);
+    const salesCsv  = '﻿' + buildSalesRangeCsv(salesRows);
+    const salesPath = path.join(os.tmpdir(), `icebox_sales_${ts}.csv`);
+    fs.writeFileSync(salesPath, salesCsv, 'utf8');
+    tmpFiles.push(salesPath);
+    await ctx.replyWithDocument(
+      { source: fs.createReadStream(salesPath), filename: 'sales.csv' },
+      { caption: `💰 فروش‌ها — ${salesRows.length} رکورد` }
+    );
+
+    // ── ۳. مخارج ─────────────────────────────────────────────────────────
+    const expRows = await getExpensesForRangeExport(businessId, startDate, endDate);
+    const expCsv  = '﻿' + buildExpensesRangeCsv(expRows);
+    const expPath = path.join(os.tmpdir(), `icebox_expenses_${ts}.csv`);
+    fs.writeFileSync(expPath, expCsv, 'utf8');
+    tmpFiles.push(expPath);
+    await ctx.replyWithDocument(
+      { source: fs.createReadStream(expPath), filename: 'expenses.csv' },
+      { caption: `🧾 مخارج — ${expRows.length} رکورد` }
+    );
+
+    // ── ۴. خریدهای مواد ───────────────────────────────────────────────────
+    const purchRows = await getSupplierPurchasesForRangeExport(businessId, startDate, endDate);
+    const purchCsv  = '﻿' + buildSupplierPurchasesRangeCsv(purchRows);
+    const purchPath = path.join(os.tmpdir(), `icebox_supp_purchases_${ts}.csv`);
+    fs.writeFileSync(purchPath, purchCsv, 'utf8');
+    tmpFiles.push(purchPath);
+    await ctx.replyWithDocument(
+      { source: fs.createReadStream(purchPath), filename: 'supplier_purchases.csv' },
+      { caption: `🛒 خریدهای مواد — ${purchRows.length} رکورد` }
+    );
+
+    // ── ۵. پرداخت‌ها به تأمین‌کنندگان ─────────────────────────────────────
+    const paymentRows = await getSupplierPaymentsForRangeExport(businessId, startDate, endDate);
+    const paymentCsv  = '﻿' + buildSupplierPaymentsRangeCsv(paymentRows);
+    const paymentPath = path.join(os.tmpdir(), `icebox_supp_payments_${ts}.csv`);
+    fs.writeFileSync(paymentPath, paymentCsv, 'utf8');
+    tmpFiles.push(paymentPath);
+    await ctx.replyWithDocument(
+      { source: fs.createReadStream(paymentPath), filename: 'supplier_payments.csv' },
+      { caption: `💳 پرداخت‌ها به تأمین‌کنندگان — ${paymentRows.length} رکورد` }
+    );
+
+    // ── ۶. انبار (همه‌وقت) ─────────────────────────────────────────────────
+    const invRows = await getAllInventoryForExport(businessId);
+    const invCsv  = '﻿' + buildInventoryCsv(invRows);
+    const invPath = path.join(os.tmpdir(), `icebox_inventory_${ts}.csv`);
+    fs.writeFileSync(invPath, invCsv, 'utf8');
+    tmpFiles.push(invPath);
+    await ctx.replyWithDocument(
+      { source: fs.createReadStream(invPath), filename: 'inventory.csv' },
+      { caption: `📦 انبار — ${invRows.length} قلم` }
+    );
+
+    // ── ۷. تراکنش‌های پرسنل ───────────────────────────────────────────────
+    const payrollRows = await getPayrollTransactionsForRangeExport(businessId, startDate, endDate);
+    const payrollCsv  = '﻿' + buildPayrollRangeCsv(payrollRows);
+    const payrollPath = path.join(os.tmpdir(), `icebox_payroll_${ts}.csv`);
+    fs.writeFileSync(payrollPath, payrollCsv, 'utf8');
+    tmpFiles.push(payrollPath);
+    await ctx.replyWithDocument(
+      { source: fs.createReadStream(payrollPath), filename: 'payroll.csv' },
+      { caption: `👥 تراکنش‌های پرسنل — ${payrollRows.length} رکورد` }
+    );
+
+    clearSession(ctx.from.id);
+    await ctx.reply(
+      MSG.accountingExportDone(7, startJalali, endJalali),
+      { parse_mode: 'Markdown', ...getMenu(getSession(ctx.from.id)) }
+    );
+  } finally {
+    for (const f of tmpFiles) {
+      try { fs.unlinkSync(f); } catch (_) {}
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // حساب پرسنل (Phase 8D)
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -2970,7 +3134,8 @@ async function handleText(ctx) {
 
   // ── منوی گزارش‌ها ──────────────────────────────────────────────────────────
   if (session.step === 'reports_menu')         return handleReportsMenu(ctx, text);
-  if (session.step === 'accounting_period')    return handleAccountingPeriodPick(ctx, text);
+  if (session.step === 'accounting_period')        return handleAccountingPeriodPick(ctx, text);
+  if (session.step === 'accounting_export_period') return handleAccountingExportPeriod(ctx, text);
   if (session.step === 'compare_period')       return handleComparePeriod(ctx, text);
   if (session.step === 'datepick_month')       return handleDatepickMonth(ctx, text);
   if (session.step === 'datepick_day')         return handleDatepickDay(ctx, text);

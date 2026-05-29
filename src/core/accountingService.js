@@ -169,6 +169,18 @@ async function getFullAccountingReport(businessId, startDate, endDate) {
   const inventory = { totalItems, lowStockCount };
 
   // ── ۵. پرسنل (در بازه) ──────────────────────────────────────────────────────
+  // حقوق پایه کل پرسنل فعال (بودجه ماهانه تقریبی)
+  const baseSalaryResult = await query(`
+    SELECT COALESCE(SUM(pp.base_salary), 0) AS total_base_salary
+    FROM business_users bu
+    LEFT JOIN payroll_profiles pp
+      ON pp.business_user_id = bu.id AND pp.business_id = bu.business_id
+    WHERE bu.business_id = $1
+      AND bu.is_active = 1
+      AND bu.role NOT IN ('business_owner', 'super_admin')
+  `, [businessId]);
+  const baseSalaryTotal = Number(baseSalaryResult.rows[0]?.total_base_salary) || 0;
+
   const txResult = await query(`
     SELECT transaction_type, COALESCE(SUM(amount), 0) AS total
     FROM staff_transactions
@@ -212,6 +224,7 @@ async function getFullAccountingReport(businessId, startDate, endDate) {
   const totalStaffBalance = Number(balanceResult.rows[0]?.total_balance) || 0;
 
   const payroll = {
+    baseSalaryTotal,
     salaryPayment:       txTotals['salary_payment']       || 0,
     advance:             txTotals['advance']              || 0,
     internalConsumption: txTotals['internal_consumption'] || 0,

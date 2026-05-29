@@ -1145,6 +1145,26 @@ const MSG = {
             ...invLines, ...payLines, ...sumLines].join('\n');
   },
 
+  // ─── خروجی حسابداری کامل (Phase 8F) ────────────────────────────────────────
+  accountingExportPeriodMenu:
+    '📊 *خروجی حسابداری کامل*\n\n' +
+    '۷ فایل CSV آماده می‌شود:\n' +
+    '• خلاصه حسابداری\n' +
+    '• فروش‌ها\n' +
+    '• مخارج\n' +
+    '• خریدهای مواد\n' +
+    '• پرداخت‌ها به تأمین‌کنندگان\n' +
+    '• انبار\n' +
+    '• تراکنش‌های پرسنل\n\n' +
+    'بازه زمانی را انتخاب کنید:',
+
+  accountingExportGenerating: '⏳ در حال آماده‌سازی ۷ فایل CSV...',
+
+  accountingExportDone: (count, startJalali, endJalali) =>
+    `✅ *خروجی حسابداری کامل ارسال شد*\n\n` +
+    `📅 از ${startJalali} تا ${endJalali}\n` +
+    `📁 ${count} فایل CSV ارسال شد.`,
+
   inventoryMovements: (movements) => {
     const pd        = '۰۱۲۳۴۵۶۷۸۹'.split('');
     const fmt       = n => String(Math.round(Math.abs(Number(n)) || 0)).replace(/\d/g, d => pd[d]);
