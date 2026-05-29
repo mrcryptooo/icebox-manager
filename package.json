@@ -4,11 +4,14 @@
   "description": "Persian Telegram bot for ice cream shop financial management",
   "main": "src/bot/telegram/index.js",
   "scripts": {
-    "start": "node src/bot/telegram/index.js",
-    "dev": "nodemon src/bot/telegram/index.js"
+    "start": "node src/app.js",
+    "dev": "nodemon src/app.js",
+    "bot-only": "node src/bot/telegram/index.js"
   },
   "dependencies": {
+    "cookie-parser": "^1.4.7",
     "dotenv": "^16.4.5",
+    "express": "^5.2.1",
     "jalaali-js": "^1.2.8",
     "pg": "^8.21.0",
     "telegraf": "^4.16.3"

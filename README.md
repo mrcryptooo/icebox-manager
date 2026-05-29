@@ -156,6 +156,7 @@ git push -u origin main
 | `BOT_TOKEN` | توکن ربات تلگرام | از @BotFather |
 | `OWNER_ID` | شناسه عددی تلگرام | آیدی super_admin سیستم |
 | `DATABASE_URL` | (خودکار) | توسط سرویس PostgreSQL تنظیم می‌شود |
+| `DASHBOARD_ADMIN_PASSWORD` | رمز دلخواه | رمز ورود به داشبورد وب (Phase 9A) |
 | `NODE_ENV` | `production` | محیط اجرا |
 
 > **نکته timezone:** سرور Railway با timezone **UTC** کار می‌کند.
@@ -241,6 +242,7 @@ Railway بعد از تنظیم Variables خودکار ربات را deploy می�
 
 ```
 src/
+  app.js              ← نقطه ورود اصلی — ربات + داشبورد وب را با هم راه‌اندازی می‌کند (Phase 9A)
   bot/
     telegram/
       index.js        ← نقطه ورود ربات + زمان‌بندی پیام‌های روزانه
@@ -262,6 +264,21 @@ src/
     inventoryService.js ← انبار مواد اولیه، حرکات موجودی (Phase 8C)
     payrollService.js   ← حقوق پرسنل، تراکنش‌های مالی پرسنلی (Phase 8D)
     accountingService.js← گزارش حسابداری مدیریتی کامل (Phase 8E)
+  web/                ← داشبورد وب (Phase 9A)
+    server.js         ← Express app، تنظیمات middleware، راه‌اندازی سرور
+    auth.js           ← احراز هویت با کوکی امضاشده، middleware requireAuth
+    routes.js         ← مسیرهای داشبورد (home/accounting/suppliers/inventory/payroll/businesses)
+    views/
+      layout.js       ← layout کامل HTML، escHtml، fmtMoney، sidebar
+      login.js        ← صفحه ورود
+      dashboard.js    ← صفحه خلاصه با ۶ کارت آماری
+      accounting.js   ← گزارش حسابداری با انتخاب بازه
+      suppliers.js    ← جدول تأمین‌کنندگان و بدهی
+      inventory.js    ← جدول موجودی انبار
+      payroll.js      ← جدول حقوق پرسنل
+      businesses.js   ← لیست کسب‌وکارها (فقط super_admin)
+    public/
+      style.css       ← RTL CSS با sidebar تاریک، کارت، جدول، صفحه ورود
   db/
     database.js       ← اتصال PostgreSQL (pg Pool) و initDatabase
     schema.sql        ← طرح جداول دیتابیس (PostgreSQL)
@@ -613,6 +630,43 @@ total_paid       = paid_at_purchase + later_payments
 
 ---
 
+## داشبورد وب (Phase 9A)
+
+### ورود به داشبورد
+
+آدرس: `http://your-railway-url` (پورت توسط Railway به‌صورت خودکار تنظیم می‌شود)
+
+برای ورود لازم است:
+- **شناسه تلگرام** (همان `OWNER_ID`)
+- **رمز عبور داشبورد** (متغیر محیطی `DASHBOARD_ADMIN_PASSWORD`)
+
+### صفحات داشبورد
+
+| آدرس | توضیح | دسترسی |
+|------|-------|---------|
+| `/` | خلاصه وضعیت با ۶ کارت آماری (فروش، مخارج، خریدها، انبار، حقوق، خالص نقدی) | همه کاربران وارد‌شده |
+| `/accounting` | گزارش حسابداری کامل با انتخاب بازه تاریخی | همه |
+| `/suppliers` | جدول تأمین‌کنندگان با بدهی جاری | همه |
+| `/inventory` | جدول موجودی انبار با هشدار کم‌موجودی | همه |
+| `/payroll` | جدول حقوق پرسنل با مانده حساب | همه |
+| `/businesses` | لیست کسب‌وکارها | فقط super_admin |
+
+### ویژگی‌های فنی
+
+- **فناوری:** Express.js + کوکی امضاشده با `cookie-parser`
+- **امنیت:** مقایسه رمز با `crypto.timingSafeEqual`، httpOnly + signed cookies، TTL ۲۴ ساعت
+- **طراحی:** RTL، فونت Tahoma، sidebar تاریک، کارت‌های رنگی، جدول‌های responsive
+- **داده:** همان سرویس‌های `core/` که ربات استفاده می‌کند — اعداد یکسان
+- **اجرا:** کنار ربات تلگرام، در همان پروسه (نقطه ورود: `src/app.js`)
+
+### متغیر محیطی جدید
+
+```env
+DASHBOARD_ADMIN_PASSWORD=رمز_قوی_دلخواه
+```
+
+---
+
 ## Roadmap
 
 | مرحله | توضیح | وضعیت |
@@ -634,7 +688,8 @@ total_paid       = paid_at_purchase + later_payments
 | Phase 8E | گزارش حسابداری کامل، cash_in/out، تعهدات، سود تقریبی | ✅ |
 | Phase 8F | خروجی حسابداری کامل — ۷ فایل CSV با تقویم شمسی | ✅ |
 | Phase 8G | QA حسابداری: اصلاح فرمول bonus، /qa_accounting، منبع مشترک | ✅ |
-| Phase 9 | داشبورد وب، Bale | 🔜 |
+| Phase 9A | داشبورد وب MVP — Express، RTL، ورود با تلگرام ID + رمز عبور | ✅ |
+| Phase 9B+ | داشبورد پیشرفته‌تر، Bale | 🔜 |
 
 ---
 
