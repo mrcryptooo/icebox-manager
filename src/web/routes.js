@@ -1,18 +1,33 @@
 'use strict';
-// ─── Dashboard Routes — Phase 9A ──────────────────────────────────────────────
-const { requireAuth }   = require('./auth');
+// ─── Dashboard Routes — Phase 9A + 9B ────────────────────────────────────────
+const { requireAuth, requireSuperAdmin } = require('./auth');
 const { getFullAccountingReport } = require('../core/accountingService');
 const { getAllSupplierBalances }   = require('../core/supplierService');
 const { getInventorySummary }      = require('../core/inventoryService');
 const { getAllStaffAccountSummaries } = require('../core/payrollService');
-const { getAllBusinesses, getDefaultBusiness } = require('../core/businessService');
+const { getAllBusinesses, getDefaultBusiness, getBusinessById } = require('../core/businessService');
 
-const { dashboardPage }  = require('./views/dashboard');
-const { accountingPage } = require('./views/accounting');
-const { suppliersPage }  = require('./views/suppliers');
-const { inventoryPage }  = require('./views/inventory');
-const { payrollPage }    = require('./views/payroll');
-const { businessesPage } = require('./views/businesses');
+// Phase 9B — admin service
+const {
+  getSystemOverview,
+  listBusinessesWithFinancialSummary,
+  getBusinessAdminDetail,
+  getBusinessRecentSales,
+  getBusinessRecentExpenses,
+  getBusinessRecentPurchases,
+  getBusinessRecentSupplierPayments,
+  getBusinessInventorySummary,
+  getBusinessPayrollSummary,
+} = require('../core/adminService');
+
+const { dashboardPage }           = require('./views/dashboard');
+const { accountingPage }          = require('./views/accounting');
+const { suppliersPage }           = require('./views/suppliers');
+const { inventoryPage }           = require('./views/inventory');
+const { payrollPage }             = require('./views/payroll');
+const { businessesPage }          = require('./views/businesses');
+const { adminDashboardPage }      = require('./views/adminDashboard');
+const { adminBusinessDetailPage } = require('./views/adminBusinessDetail');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function isoToday() {
@@ -130,19 +145,66 @@ function registerRoutes(app) {
     }
   });
 
-  // ─── Businesses (super_admin only) ─────────────────────────────────────────
-  app.get('/businesses', requireAuth, async (req, res) => {
+  // ─── Businesses (super_admin only) — لیست ساده فازه 9A ──────────────────────
+  app.get('/businesses', requireAuth, requireSuperAdmin, async (req, res) => {
     try {
-      if (!res.locals.isSuperAdmin) {
-        return res.status(403).send('دسترسی ندارید.');
-      }
       const businesses = await getAllBusinesses();
-      res.send(businessesPage({
-        isSuperAdmin: true,
-        businesses,
-      }));
+      res.send(businessesPage({ isSuperAdmin: true, businesses }));
     } catch (err) {
       console.error('[Dashboard] Businesses error:', err);
+      res.status(500).send('خطای داخلی سرور.');
+    }
+  });
+
+  // ─── Admin: داشبورد کل سیستم (Phase 9B) ────────────────────────────────────
+  app.get('/admin', requireAuth, requireSuperAdmin, async (req, res) => {
+    try {
+      const [overview, { businesses: bizList, monthStart, today }] =
+        await Promise.all([
+          getSystemOverview(),
+          listBusinessesWithFinancialSummary(),
+        ]);
+      res.send(adminDashboardPage({ overview, bizList, monthStart, today }));
+    } catch (err) {
+      console.error('[Admin] Dashboard error:', err);
+      res.status(500).send('خطای داخلی سرور.');
+    }
+  });
+
+  // ─── Admin: جزئیات یک کسب‌وکار (Phase 9B) ──────────────────────────────────
+  app.get('/admin/business/:id', requireAuth, requireSuperAdmin, async (req, res) => {
+    try {
+      const bizId = parseInt(req.params.id, 10);
+      if (!bizId || isNaN(bizId)) return res.status(400).send('شناسه نامعتبر است.');
+
+      const detail = await getBusinessAdminDetail(bizId);
+      if (!detail) return res.status(404).send('کسب‌وکاری با این شناسه یافت نشد.');
+
+      const monthStart = new Date().toISOString().slice(0, 7) + '-01';
+      const today      = new Date().toISOString().slice(0, 10);
+
+      const [
+        report, recentSales, recentExpenses, suppliers,
+        inventory, payroll, recentPurchases, recentSupplierPayments,
+      ] = await Promise.all([
+        getFullAccountingReport(bizId, monthStart, today),
+        getBusinessRecentSales(bizId, 20),
+        getBusinessRecentExpenses(bizId, 20),
+        getAllSupplierBalances(bizId),
+        getBusinessInventorySummary(bizId),
+        getBusinessPayrollSummary(bizId),
+        getBusinessRecentPurchases(bizId, 20),
+        getBusinessRecentSupplierPayments(bizId, 20),
+      ]);
+
+      res.send(adminBusinessDetailPage({
+        detail, report, recentSales, recentExpenses,
+        suppliers, inventory, payroll,
+        recentPurchases, recentSupplierPayments,
+        monthStart, today,
+      }));
+    } catch (err) {
+      console.error('[Admin] Business detail error:', err);
       res.status(500).send('خطای داخلی سرور.');
     }
   });

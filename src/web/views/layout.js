@@ -26,20 +26,34 @@ function fmtNum(n) {
 
 // Sidebar nav links
 function navLinks(active, isSuperAdmin) {
-  const links = [
+  // لینک‌های پایه برای همه کاربران
+  const bizLinks = [
     { href: '/',            icon: '🏠', label: 'خلاصه' },
     { href: '/accounting',  icon: '📊', label: 'حسابداری' },
     { href: '/suppliers',   icon: '🚚', label: 'تأمین‌کنندگان' },
     { href: '/inventory',   icon: '📦', label: 'انبار' },
     { href: '/payroll',     icon: '👥', label: 'پرسنل' },
   ];
-  if (isSuperAdmin) {
-    links.push({ href: '/businesses', icon: '🏢', label: 'کسب‌وکارها' });
-  }
-  return links.map(l => {
-    const cls = l.href === active ? 'active' : '';
+
+  function linkHtml(l) {
+    const cls = (l.href === active || (active && active.startsWith('/admin') && l.href === '/admin')) ? 'active' : '';
     return `<a href="${l.href}" class="nav-link ${cls}">${l.icon} <span>${escHtml(l.label)}</span></a>`;
-  }).join('\n');
+  }
+
+  if (isSuperAdmin) {
+    // super_admin: بخش ادمین کل + جداکننده + لینک‌های کسب‌وکار
+    const adminLinks = [
+      { href: '/admin', icon: '🌐', label: 'پنل ادمین کل' },
+    ];
+    return `
+      <div class="nav-section-label">مدیریت سیستم</div>
+      ${adminLinks.map(linkHtml).join('\n')}
+      <div class="nav-divider"></div>
+      <div class="nav-section-label">کسب‌وکار من</div>
+      ${bizLinks.map(linkHtml).join('\n')}`;
+  }
+
+  return bizLinks.map(linkHtml).join('\n');
 }
 
 // Full page layout

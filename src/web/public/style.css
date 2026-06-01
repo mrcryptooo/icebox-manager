@@ -374,6 +374,74 @@ body {
 }
 .login-btn:hover { background: #1d4ed8; }
 
+/* ─── Admin Dashboard — Phase 9B ─────────────────────────────────────────────── */
+.admin-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+
+/* جداکننده و برچسب بخش‌های sidebar */
+.nav-section-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: #4b5563;
+  padding: 10px 12px 4px;
+  font-weight: bold;
+}
+.nav-divider {
+  height: 1px;
+  background: #2d3550;
+  margin: 8px 12px;
+}
+
+/* دکمه جزئیات در جدول کسب‌وکارها */
+.btn-detail {
+  display: inline-block;
+  padding: 4px 12px;
+  background: var(--sidebar-active);
+  color: #fff;
+  border-radius: 6px;
+  font-size: 12px;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background .15s;
+}
+.btn-detail:hover { background: #1d4ed8; }
+
+/* لینک نام کسب‌وکار در جدول */
+.detail-link {
+  color: var(--sidebar-active);
+  text-decoration: none;
+  font-weight: bold;
+}
+.detail-link:hover { text-decoration: underline; }
+
+/* رنگ اعداد مثبت/منفی */
+.num-positive { color: var(--green); font-weight: bold; }
+.num-negative { color: var(--red);   font-weight: bold; }
+
+/* کارت اطلاعات کسب‌وکار در صفحه جزئیات */
+.detail-info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+.info-block {
+  background: #f8fafc;
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+.info-label  { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
+.info-value  { font-size: 14px; color: var(--text); font-weight: 500; }
+.text-muted  { color: var(--text-muted); font-size: 12px; }
+
+/* دکمه بازگشت */
+.detail-back { margin-bottom: 16px; }
+.back-link {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 14px;
+}
+.back-link:hover { color: var(--sidebar-active); }
+
 /* ─── Responsive ─────────────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .sidebar {

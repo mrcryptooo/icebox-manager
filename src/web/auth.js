@@ -54,9 +54,34 @@ function requireAuth(req, res, next) {
     return res.redirect('/login');
   }
   const ownerId = process.env.OWNER_ID ? Number(process.env.OWNER_ID) : null;
-  res.locals.telegramId  = Number(telegramId);
-  res.locals.isSuperAdmin = ownerId && Number(telegramId) === ownerId;
+  res.locals.telegramId   = Number(telegramId);
+  res.locals.isSuperAdmin = !!(ownerId && Number(telegramId) === ownerId);
   next();
 }
 
-module.exports = { verifyLogin, setSession, getSession, clearSession, requireAuth };
+// Express middleware — requires super_admin role
+// باید بعد از requireAuth استفاده شود.
+function requireSuperAdmin(req, res, next) {
+  if (!res.locals.isSuperAdmin) {
+    return res.status(403).send(`<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>دسترسی ممنوع — IceBox Manager</title>
+  <link rel="stylesheet" href="/public/style.css">
+</head>
+<body class="login-body">
+  <div class="login-card" style="text-align:center">
+    <div style="font-size:48px;margin-bottom:12px">🚫</div>
+    <h1 style="font-size:20px;margin-bottom:8px">دسترسی ممنوع</h1>
+    <p style="color:#64748b;margin-bottom:24px">شما به این بخش دسترسی ندارید.</p>
+    <a href="/" style="color:#3b82f6;text-decoration:none">← بازگشت به داشبورد</a>
+  </div>
+</body>
+</html>`);
+  }
+  next();
+}
+
+module.exports = { verifyLogin, setSession, getSession, clearSession, requireAuth, requireSuperAdmin };
