@@ -49,10 +49,53 @@ async function ensureDefaultBusiness() {
   return result.rows[0].id;
 }
 
+// ─── ترمیم business_user مفقود برای مالکان (Phase 9B Recovery) ──────────────
+// فقط read-کردن + INSERT/ON CONFLICT UPDATE — هیچ DELETE/DROP نمی‌کند.
+// فقط از دستور /repair_business_users (super_admin) فراخوانی شود.
+async function repairMissingBusinessOwners() {
+  // کسب‌وکارهایی که owner_id دارند ولی business_user فعال business_owner ندارند
+  const missingRes = await query(`
+    SELECT b.id AS business_id, b.name, b.owner_id
+    FROM businesses b
+    WHERE b.is_active  = 1
+      AND b.owner_id   IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM business_users bu
+        WHERE bu.business_id = b.id
+          AND bu.user_id     = b.owner_id
+          AND bu.is_active   = 1
+          AND bu.role        = 'business_owner'
+      )
+  `);
+
+  const missing = missingRes.rows;
+  if (missing.length === 0) return { missing: 0, repaired: 0, details: [] };
+
+  let repaired = 0;
+  for (const row of missing) {
+    await query(`
+      INSERT INTO business_users (business_id, user_id, role, permissions, is_active)
+      VALUES ($1, $2, 'business_owner', '["*"]'::jsonb, 1)
+      ON CONFLICT (business_id, user_id) DO UPDATE
+        SET role        = 'business_owner',
+            permissions = '["*"]'::jsonb,
+            is_active   = 1
+    `, [row.business_id, row.owner_id]);
+    repaired++;
+  }
+
+  return {
+    missing:  missing.length,
+    repaired,
+    details:  missing.map(r => ({ businessId: r.business_id, name: r.name })),
+  };
+}
+
 module.exports = {
   createBusiness,
   getBusinessById,
   getAllBusinesses,
   getDefaultBusiness,
   ensureDefaultBusiness,
+  repairMissingBusinessOwners,
 };

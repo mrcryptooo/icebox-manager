@@ -1,6 +1,10 @@
 require('dotenv').config();
 const { Telegraf } = require('telegraf');
-const { handleStart, handleText, handleId, handleHealth, handleExportCommand, handleQaAccounting } = require('./handlers');
+const {
+  handleStart, handleText, handleId, handleHealth,
+  handleExportCommand, handleQaAccounting,
+  handleDebugUser, handleDebugCounts, handleRepairBusinessUsers,
+} = require('./handlers');
 const { initDatabase } = require('../../db/database');
 const MSG = require('./messages');
 
@@ -86,7 +90,12 @@ async function main() {
   bot.command('menu',          handleStart);
   bot.command('health',        handleHealth);
   bot.command('export',        handleExportCommand);
-  bot.command('qa_accounting', handleQaAccounting);
+  bot.command('qa_accounting',          handleQaAccounting);
+
+  // ─── دستورات debug — فقط super_admin ─────────────────────────────────────
+  bot.command('debug_user',             handleDebugUser);
+  bot.command('debug_counts',           handleDebugCounts);
+  bot.command('repair_business_users',  handleRepairBusinessUsers);
 
   bot.on('text', handleText);
 

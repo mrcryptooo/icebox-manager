@@ -5,7 +5,7 @@ const fs   = require('fs');
 
 const { getSession, clearSession }                    = require('../../utils/session');
 const { isSuperAdmin, hasPermission, loadBizContext } = require('../../utils/auth');
-const { checkConnection }                              = require('../../db/database');
+const { checkConnection, query }                       = require('../../db/database');
 const { formatMoney, formatNumber }                    = require('../../utils/formatMoney');
 const {
   getTodayDate, getWeekRange, getMonthRange,
@@ -62,7 +62,7 @@ const {
   createSupplierPurchase, createSupplierPayment,
   getAllPurchasesForExport,
 } = require('../../core/supplierService');
-const { createBusiness, getDefaultBusiness, ensureDefaultBusiness } = require('../../core/businessService');
+const { createBusiness, getDefaultBusiness, ensureDefaultBusiness, repairMissingBusinessOwners } = require('../../core/businessService');
 const { createLicense, getLicenseByCode, getAllLicenses, activateLicense } = require('../../core/licenseService');
 const {
   addTeamMember, getTeamMembers, getAllTeamMembers,
@@ -264,6 +264,18 @@ async function handleRegistrationStep(ctx, text) {
   const { step, data } = session;
 
   if (step === 'register_license') {
+    // ── محافظ: اگر کاربر قبلاً ثبت‌نام کرده (بعد از restart سرور) ──────────
+    const existingBiz = await loadBizContext(ctx.from.id);
+    if (existingBiz) {
+      session.biz  = existingBiz;
+      session.step = null;
+      session.data = {};
+      return ctx.reply(
+        `✅ حساب شما قبلاً فعال است.\nبه کسب‌وکار «${existingBiz.businessName}» خوش آمدید.`,
+        { parse_mode: 'Markdown', ...getMenu(session) }
+      );
+    }
+
     const code = text.trim().toUpperCase();
     if (!/^ICE-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
       return ctx.reply(MSG.licenseInvalid, KB.cancelKeyboard);
@@ -3072,15 +3084,30 @@ async function handleText(ctx) {
 
   // ── جریان ثبت‌نام (کاربر بدون کسب‌وکار) ──────────────────────────────────
   if (!session.biz && !isSuperAdmin(ctx)) {
-    if (text === '❌ لغو' || text === '🏠 منوی اصلی') {
+    // ── اول از DB بارگذاری کن ──────────────────────────────────────────────
+    // جلوگیری از درخواست لایسنس بعد از restart سرور برای کاربران موجود
+    const bizFromDb = await loadBizContext(ctx.from.id);
+    if (bizFromDb) {
+      // کاربر موجود است — بدون restart دوباره وصل شد
+      session.biz = bizFromDb;
+      // ادامه flow عادی (fall-through)
+    } else {
+      // بررسی غیرفعال بودن
+      const inactive = await getInactiveMembership(ctx.from.id);
+      if (inactive) {
+        return ctx.reply(MSG.memberInactive, KB.cancelKeyboard);
+      }
+      // کاربر واقعاً جدید یا بدون کسب‌وکار
+      if (text === '❌ لغو' || text === '🏠 منوی اصلی') {
+        session.step = 'register_license';
+        return ctx.reply(MSG.licensePrompt, KB.cancelKeyboard);
+      }
+      if (session.step && session.step.startsWith('register_')) {
+        return handleRegistrationStep(ctx, text);
+      }
       session.step = 'register_license';
       return ctx.reply(MSG.licensePrompt, KB.cancelKeyboard);
     }
-    if (session.step && session.step.startsWith('register_')) {
-      return handleRegistrationStep(ctx, text);
-    }
-    session.step = 'register_license';
-    return ctx.reply(MSG.licensePrompt, KB.cancelKeyboard);
   }
 
   // ── لغو از هر جای ربات ────────────────────────────────────────────────────
@@ -3346,11 +3373,169 @@ async function handleQaAccounting(ctx) {
 async function handleUnregistered(ctx) {
   const session = getSession(ctx.from.id);
   if (session.step && session.step.startsWith('register_')) {
-    // در جریان ثبت‌نام هستند — ادامه دهند
     return handleText(ctx);
   }
   session.step = 'register_license';
   return ctx.reply(MSG.licensePrompt, KB.cancelKeyboard);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// /debug_user [telegram_id] — فقط super_admin
+// ═══════════════════════════════════════════════════════════════════════════════
+async function handleDebugUser(ctx) {
+  if (!isSuperAdmin(ctx)) return;
+  const parts    = (ctx.message.text || '').trim().split(/\s+/);
+  const targetId = parts[1] ? Number(parts[1]) : null;
+
+  if (!targetId || isNaN(targetId)) {
+    return ctx.reply('⚠️ فرمت:\n/debug_user TELEGRAM_ID\nمثال: /debug_user 123456789');
+  }
+
+  try {
+    const userRes = await query('SELECT id, name FROM users WHERE telegram_id = $1', [targetId]);
+    const user    = userRes.rows[0];
+
+    if (!user) {
+      return ctx.reply(`🔍 کاربر \`${targetId}\`\n\n❌ در جدول users ثبت نشده.\n→ هنوز /start نزده.`, { parse_mode: 'Markdown' });
+    }
+
+    const buRes = await query(`
+      SELECT bu.business_id, bu.role, bu.is_active, bu.permissions,
+             b.name AS business_name, b.is_active AS biz_active
+      FROM business_users bu
+      JOIN businesses b ON b.id = bu.business_id
+      WHERE bu.user_id = $1
+      ORDER BY bu.is_active DESC, bu.business_id
+    `, [user.id]);
+
+    const lines = [
+      `🔍 بررسی کاربر \`${targetId}\``,
+      `👤 نام: ${user.name || '—'}`,
+      `🗄️ users.id: ${user.id}`,
+      '',
+    ];
+
+    if (buRes.rows.length === 0) {
+      lines.push('❌ هیچ business_user رکوردی ندارد.');
+      lines.push('→ این کاربر باید لایسنس وارد کند.');
+    } else {
+      for (const bu of buRes.rows) {
+        const perms   = Array.isArray(bu.permissions) ? bu.permissions : [];
+        const active  = bu.is_active == 1 ? '✅ فعال' : '❌ غیرفعال';
+        const bizAct  = bu.biz_active == 1 ? '✅' : '❌';
+        lines.push(`📋 Business #${bu.business_id}: ${bu.business_name} (biz: ${bizAct})`);
+        lines.push(`  نقش: ${bu.role}`);
+        lines.push(`  وضعیت: ${active}`);
+        lines.push(`  دسترسی: ${perms.includes('*') ? 'کامل (*)' : perms.length + ' مورد'}`);
+        lines.push('');
+      }
+    }
+
+    return ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+  } catch (err) {
+    return ctx.reply(`❌ خطا: ${err.message}`);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// /debug_counts — فقط super_admin
+// ═══════════════════════════════════════════════════════════════════════════════
+async function handleDebugCounts(ctx) {
+  if (!isSuperAdmin(ctx)) return;
+
+  try {
+    const tables = [
+      'businesses', 'licenses', 'business_users',
+      'sales', 'expenses', 'suppliers',
+      'inventory_items', 'payroll_profiles',
+    ];
+    const lines = ['📊 *تعداد رکوردها در دیتابیس:*\n'];
+
+    for (const t of tables) {
+      const res = await query(`SELECT COUNT(*) AS cnt FROM ${t}`);
+      lines.push(`• ${t}: \`${res.rows[0].cnt}\``);
+    }
+
+    // business_users breakdown
+    const buRes = await query(`
+      SELECT role, is_active, COUNT(*) AS cnt
+      FROM business_users
+      GROUP BY role, is_active
+      ORDER BY role, is_active
+    `);
+    lines.push('\n👥 *business_users (نقش / وضعیت):*');
+    for (const r of buRes.rows) {
+      lines.push(`  ${r.role} / ${r.is_active == 1 ? 'فعال' : 'غیرفعال'}: ${r.cnt}`);
+    }
+
+    // businesses with missing owner business_user
+    const missingRes = await query(`
+      SELECT COUNT(*) AS cnt
+      FROM businesses b
+      WHERE b.is_active = 1 AND b.owner_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM business_users bu
+          WHERE bu.business_id = b.id AND bu.user_id = b.owner_id AND bu.is_active = 1
+        )
+    `);
+    const missing = Number(missingRes.rows[0].cnt);
+    lines.push(`\n⚠️ کسب‌وکارهای با owner_id مفقود در business_users: \`${missing}\``);
+    if (missing > 0) {
+      lines.push('→ /repair_business_users را اجرا کن.');
+    }
+
+    return ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+  } catch (err) {
+    return ctx.reply(`❌ خطا: ${err.message}`);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// /repair_business_users — فقط super_admin
+// فقط INSERT/ON CONFLICT — هیچ DELETE انجام نمی‌دهد
+// ═══════════════════════════════════════════════════════════════════════════════
+async function handleRepairBusinessUsers(ctx) {
+  if (!isSuperAdmin(ctx)) return;
+
+  try {
+    const beforeRes = await query(`
+      SELECT COUNT(*) AS cnt FROM business_users WHERE is_active = 1
+    `);
+    const beforeCount = Number(beforeRes.rows[0].cnt);
+
+    const result = await repairMissingBusinessOwners();
+
+    const afterRes = await query(`
+      SELECT COUNT(*) AS cnt FROM business_users WHERE is_active = 1
+    `);
+    const afterCount = Number(afterRes.rows[0].cnt);
+
+    if (result.missing === 0) {
+      return ctx.reply(
+        '✅ *همه business_user رکوردها سالم هستند.*\nچیزی نیاز به ترمیم نداشت.',
+        { parse_mode: 'Markdown' }
+      );
+    }
+
+    const lines = [
+      '🔧 *نتیجه ترمیم business_users:*\n',
+      `• رکوردهای مفقود: ${result.missing}`,
+      `• ساخته‌شده:      ${result.repaired}`,
+      `• قبل:  ${beforeCount} رکورد فعال`,
+      `• بعد:  ${afterCount} رکورد فعال`,
+    ];
+    if (result.details.length > 0) {
+      lines.push('\n📋 کسب‌وکارهای ترمیم‌شده:');
+      for (const d of result.details) {
+        lines.push(`  #${d.businessId}: ${d.name}`);
+      }
+    }
+    lines.push('\n✅ کاربران ترمیم‌شده می‌توانند دوباره /start بزنند.');
+
+    return ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+  } catch (err) {
+    return ctx.reply(`❌ خطا: ${err.message}`);
+  }
 }
 
 module.exports = {
@@ -3361,4 +3546,7 @@ module.exports = {
   handleExportCommand,
   handleQaAccounting,
   handleUnregistered,
+  handleDebugUser,
+  handleDebugCounts,
+  handleRepairBusinessUsers,
 };
