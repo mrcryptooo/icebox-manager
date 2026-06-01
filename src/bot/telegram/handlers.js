@@ -3396,7 +3396,7 @@ async function handleDebugUser(ctx) {
     const user    = userRes.rows[0];
 
     if (!user) {
-      return ctx.reply(`🔍 کاربر \`${targetId}\`\n\n❌ در جدول users ثبت نشده.\n→ هنوز /start نزده.`, { parse_mode: 'Markdown' });
+      return ctx.reply(`🔍 کاربر ${targetId}\n\n❌ در جدول users ثبت نشده.\n→ هنوز /start نزده.`);
     }
 
     const buRes = await query(`
@@ -3409,20 +3409,20 @@ async function handleDebugUser(ctx) {
     `, [user.id]);
 
     const lines = [
-      `🔍 بررسی کاربر \`${targetId}\``,
+      `🔍 بررسی کاربر ${targetId}`,
       `👤 نام: ${user.name || '—'}`,
       `🗄️ users.id: ${user.id}`,
       '',
     ];
 
     if (buRes.rows.length === 0) {
-      lines.push('❌ هیچ business_user رکوردی ندارد.');
+      lines.push('❌ هیچ عضویتی (business_user) ندارد.');
       lines.push('→ این کاربر باید لایسنس وارد کند.');
     } else {
       for (const bu of buRes.rows) {
-        const perms   = Array.isArray(bu.permissions) ? bu.permissions : [];
-        const active  = bu.is_active == 1 ? '✅ فعال' : '❌ غیرفعال';
-        const bizAct  = bu.biz_active == 1 ? '✅' : '❌';
+        const perms  = Array.isArray(bu.permissions) ? bu.permissions : [];
+        const active = bu.is_active == 1 ? '✅ فعال' : '❌ غیرفعال';
+        const bizAct = bu.biz_active == 1 ? '✅' : '❌';
         lines.push(`📋 Business #${bu.business_id}: ${bu.business_name} (biz: ${bizAct})`);
         lines.push(`  نقش: ${bu.role}`);
         lines.push(`  وضعیت: ${active}`);
@@ -3431,7 +3431,7 @@ async function handleDebugUser(ctx) {
       }
     }
 
-    return ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+    return ctx.reply(lines.join('\n'));
   } catch (err) {
     return ctx.reply(`❌ خطا: ${err.message}`);
   }
@@ -3449,26 +3449,26 @@ async function handleDebugCounts(ctx) {
       'sales', 'expenses', 'suppliers',
       'inventory_items', 'payroll_profiles',
     ];
-    const lines = ['📊 *تعداد رکوردها در دیتابیس:*\n'];
+    const lines = ['📊 تعداد رکوردها در دیتابیس:\n'];
 
     for (const t of tables) {
       const res = await query(`SELECT COUNT(*) AS cnt FROM ${t}`);
-      lines.push(`• ${t}: \`${res.rows[0].cnt}\``);
+      lines.push(`• ${t}: ${res.rows[0].cnt}`);
     }
 
-    // business_users breakdown
+    // اعضای کسب‌وکار بر اساس نقش و وضعیت
     const buRes = await query(`
       SELECT role, is_active, COUNT(*) AS cnt
       FROM business_users
       GROUP BY role, is_active
       ORDER BY role, is_active
     `);
-    lines.push('\n👥 *business_users (نقش / وضعیت):*');
+    lines.push('\n👥 اعضا (نقش / وضعیت):');
     for (const r of buRes.rows) {
       lines.push(`  ${r.role} / ${r.is_active == 1 ? 'فعال' : 'غیرفعال'}: ${r.cnt}`);
     }
 
-    // businesses with missing owner business_user
+    // کسب‌وکارهایی که owner آن‌ها در اعضا نیست
     const missingRes = await query(`
       SELECT COUNT(*) AS cnt
       FROM businesses b
@@ -3479,12 +3479,12 @@ async function handleDebugCounts(ctx) {
         )
     `);
     const missing = Number(missingRes.rows[0].cnt);
-    lines.push(`\n⚠️ کسب‌وکارهای با owner_id مفقود در business_users: \`${missing}\``);
+    lines.push(`\n⚠️ مالکان مفقود در اعضا: ${missing}`);
     if (missing > 0) {
       lines.push('→ /repair_business_users را اجرا کن.');
     }
 
-    return ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+    return ctx.reply(lines.join('\n'));
   } catch (err) {
     return ctx.reply(`❌ خطا: ${err.message}`);
   }
@@ -3511,15 +3511,12 @@ async function handleRepairBusinessUsers(ctx) {
     const afterCount = Number(afterRes.rows[0].cnt);
 
     if (result.missing === 0) {
-      return ctx.reply(
-        '✅ *همه business_user رکوردها سالم هستند.*\nچیزی نیاز به ترمیم نداشت.',
-        { parse_mode: 'Markdown' }
-      );
+      return ctx.reply('✅ همه اعضای مالک سالم هستند.\nچیزی نیاز به ترمیم نداشت.');
     }
 
     const lines = [
-      '🔧 *نتیجه ترمیم business_users:*\n',
-      `• رکوردهای مفقود: ${result.missing}`,
+      '🔧 نتیجه ترمیم اعضا:\n',
+      `• مفقود پیدا شده: ${result.missing}`,
       `• ساخته‌شده:      ${result.repaired}`,
       `• قبل:  ${beforeCount} رکورد فعال`,
       `• بعد:  ${afterCount} رکورد فعال`,
@@ -3532,7 +3529,7 @@ async function handleRepairBusinessUsers(ctx) {
     }
     lines.push('\n✅ کاربران ترمیم‌شده می‌توانند دوباره /start بزنند.');
 
-    return ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+    return ctx.reply(lines.join('\n'));
   } catch (err) {
     return ctx.reply(`❌ خطا: ${err.message}`);
   }
