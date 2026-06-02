@@ -4,6 +4,7 @@ const {
   handleStart, handleText, handleId, handleHealth,
   handleExportCommand, handleQaAccounting,
   handleDebugUser, handleDebugCounts, handleRepairBusinessUsers,
+  handleDebugLicense, handleRepairLicenseOwner,
 } = require('./handlers');
 const { initDatabase } = require('../../db/database');
 const MSG = require('./messages');
@@ -93,9 +94,11 @@ async function main() {
   bot.command('qa_accounting',          handleQaAccounting);
 
   // ─── دستورات debug — فقط super_admin ─────────────────────────────────────
-  bot.command('debug_user',             handleDebugUser);
-  bot.command('debug_counts',           handleDebugCounts);
-  bot.command('repair_business_users',  handleRepairBusinessUsers);
+  bot.command('debug_user',              handleDebugUser);
+  bot.command('debug_counts',            handleDebugCounts);
+  bot.command('repair_business_users',   handleRepairBusinessUsers);
+  bot.command('debug_license',           handleDebugLicense);
+  bot.command('repair_license_owner',    handleRepairLicenseOwner);
 
   bot.on('text', handleText);
 

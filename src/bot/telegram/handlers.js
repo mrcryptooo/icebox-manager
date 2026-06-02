@@ -281,9 +281,37 @@ async function handleRegistrationStep(ctx, text) {
       return ctx.reply(MSG.licenseInvalid, KB.cancelKeyboard);
     }
     const license = await getLicenseByCode(code);
-    if (!license || license.used_by !== null) {
+    if (!license) {
       return ctx.reply(MSG.licenseUsedOrInvalid, KB.cancelKeyboard);
     }
+
+    // اگر لایسنس قبلاً استفاده شده، چک کن شاید همین کاربر صاحب آن کسب‌وکار باشد
+    if (license.used_by !== null) {
+      const ownerCheck = await query(`
+        SELECT bu.business_id, bu.role, bu.is_active
+        FROM business_users bu
+        JOIN users u ON u.id = bu.user_id
+        WHERE u.telegram_id = $1 AND bu.business_id = $2
+        LIMIT 1
+      `, [ctx.from.id, license.used_by]);
+
+      if (ownerCheck.rows.length > 0) {
+        // این کاربر به این کسب‌وکار وصل است — مجدداً load کن
+        const reloadedBiz = await loadBizContext(ctx.from.id);
+        if (reloadedBiz) {
+          session.biz  = reloadedBiz;
+          session.step = null;
+          session.data = {};
+          return ctx.reply(
+            `✅ حساب شما قبلاً فعال است.\nبه کسب‌وکار «${reloadedBiz.businessName}» خوش آمدید.`,
+            getMenu(session)
+          );
+        }
+      }
+      // لایسنس متعلق به کاربر دیگری است
+      return ctx.reply(MSG.licenseUsedOrInvalid, KB.cancelKeyboard);
+    }
+
     data.licenseCode = code;
     session.step = 'register_biz_name';
     return ctx.reply(MSG.askBusinessName, KB.cancelKeyboard);
@@ -3535,6 +3563,197 @@ async function handleRepairBusinessUsers(ctx) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// /debug_license CODE — بررسی کامل یک لایسنس فقط برای super_admin
+// ═══════════════════════════════════════════════════════════════════════════════
+async function handleDebugLicense(ctx) {
+  if (!isSuperAdmin(ctx)) return;
+  const parts = (ctx.message.text || '').trim().split(/\s+/);
+  const code  = parts[1] ? parts[1].toUpperCase() : null;
+
+  if (!code) {
+    return ctx.reply('فرمت:\n/debug_license ICE-XXXX-XXXX');
+  }
+
+  try {
+    const licRes = await query('SELECT * FROM licenses WHERE code = $1', [code]);
+    if (licRes.rows.length === 0) {
+      return ctx.reply(`❌ لایسنس ${code} در دیتابیس وجود ندارد.`);
+    }
+    const lic = licRes.rows[0];
+
+    const lines = [
+      `🔑 لایسنس: ${lic.code}`,
+      `📌 وضعیت: ${lic.used_by ? 'استفاده‌شده' : 'آزاد'}`,
+      `🏢 Business ID: ${lic.used_by || '—'}`,
+      `📅 ساخته: ${lic.created_at ? new Date(lic.created_at).toLocaleDateString('fa-IR') : '—'}`,
+      `📅 فعال‌شده: ${lic.used_at ? new Date(lic.used_at).toLocaleDateString('fa-IR') : '—'}`,
+      '',
+    ];
+
+    if (!lic.used_by) {
+      lines.push('ℹ️ این لایسنس هنوز به کسب‌وکاری وصل نشده.');
+      return ctx.reply(lines.join('\n'));
+    }
+
+    // کسب‌وکار
+    const bizRes = await query('SELECT * FROM businesses WHERE id = $1', [lic.used_by]);
+    if (bizRes.rows.length === 0) {
+      lines.push('❌ کسب‌وکار مرتبط پیدا نشد — دیتا ناسازگار!');
+      return ctx.reply(lines.join('\n'));
+    }
+    const biz = bizRes.rows[0];
+    lines.push(`📊 کسب‌وکار: ${biz.name} (id=${biz.id})`);
+    lines.push(`  نوع: ${biz.type || '—'}  شهر: ${biz.city || '—'}`);
+    lines.push(`  is_active: ${biz.is_active}`);
+    lines.push(`  owner_id (users.id): ${biz.owner_id || '—'}`);
+    lines.push('');
+
+    // مالک
+    if (biz.owner_id) {
+      const ownerRes = await query(
+        'SELECT id, telegram_id, name FROM users WHERE id = $1',
+        [biz.owner_id]
+      );
+      if (ownerRes.rows.length > 0) {
+        const owner = ownerRes.rows[0];
+        lines.push(`👤 مالک ثبت‌شده:`);
+        lines.push(`  نام: ${owner.name || '—'}`);
+        lines.push(`  telegram_id: ${owner.telegram_id}`);
+        lines.push('');
+      } else {
+        lines.push(`❌ مالک (users.id=${biz.owner_id}) در جدول users پیدا نشد!`);
+        lines.push('');
+      }
+    } else {
+      lines.push('⚠️ این کسب‌وکار owner_id ندارد!');
+      lines.push('');
+    }
+
+    // اعضای کسب‌وکار
+    const buRes = await query(`
+      SELECT bu.id, bu.user_id, bu.role, bu.is_active,
+             u.telegram_id, u.name
+      FROM business_users bu
+      LEFT JOIN users u ON u.id = bu.user_id
+      WHERE bu.business_id = $1
+      ORDER BY bu.is_active DESC, bu.id
+    `, [lic.used_by]);
+
+    lines.push(`👥 اعضا (${buRes.rows.length} نفر):`);
+    if (buRes.rows.length === 0) {
+      lines.push('  ❌ هیچ عضوی ندارد — /repair_business_users یا /repair_license_owner لازم است!');
+    } else {
+      for (const bu of buRes.rows) {
+        const act = bu.is_active == 1 ? '✅' : '❌';
+        lines.push(`  ${act} ${bu.role} — tg:${bu.telegram_id || '—'} (users.id=${bu.user_id})`);
+      }
+    }
+    lines.push('');
+
+    // دیتای مالی
+    const [salesCnt, expCnt, brCnt, supCnt, invCnt, payrollCnt] = await Promise.all([
+      query('SELECT COUNT(*) AS c FROM sales WHERE business_id = $1 AND deleted_at IS NULL', [lic.used_by]),
+      query('SELECT COUNT(*) AS c FROM expenses WHERE business_id = $1 AND deleted_at IS NULL', [lic.used_by]),
+      query('SELECT COUNT(*) AS c FROM branches WHERE business_id = $1', [lic.used_by]),
+      query('SELECT COUNT(*) AS c FROM suppliers WHERE business_id = $1', [lic.used_by]),
+      query('SELECT COUNT(*) AS c FROM inventory_items WHERE business_id = $1', [lic.used_by]),
+      query('SELECT COUNT(*) AS c FROM payroll_profiles WHERE business_id = $1', [lic.used_by]),
+    ]);
+
+    lines.push('📊 دیتای مالی:');
+    lines.push(`  فروش: ${salesCnt.rows[0].c}`);
+    lines.push(`  مخارج: ${expCnt.rows[0].c}`);
+    lines.push(`  شعبه: ${brCnt.rows[0].c}`);
+    lines.push(`  تأمین‌کننده: ${supCnt.rows[0].c}`);
+    lines.push(`  انبار: ${invCnt.rows[0].c}`);
+    lines.push(`  پروفایل حقوقی: ${payrollCnt.rows[0].c}`);
+
+    return ctx.reply(lines.join('\n'));
+  } catch (err) {
+    return ctx.reply(`❌ خطا: ${err.message}`);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// /repair_license_owner CODE TELEGRAM_ID — ترمیم اتصال مالک لایسنس
+// فقط super_admin — هیچ دیتای مالی دست نمی‌خورد
+// ═══════════════════════════════════════════════════════════════════════════════
+async function handleRepairLicenseOwner(ctx) {
+  if (!isSuperAdmin(ctx)) return;
+  const parts      = (ctx.message.text || '').trim().split(/\s+/);
+  const licCode    = parts[1] ? parts[1].toUpperCase() : null;
+  const telegramId = parts[2] ? Number(parts[2]) : null;
+
+  if (!licCode || !telegramId || isNaN(telegramId)) {
+    return ctx.reply(
+      'فرمت:\n/repair_license_owner ICE-XXXX-XXXX TELEGRAM_ID\n\nمثال:\n/repair_license_owner ICE-A9XA-980T 123456789'
+    );
+  }
+
+  try {
+    // ۱. لایسنس
+    const licRes = await query('SELECT * FROM licenses WHERE code = $1', [licCode]);
+    if (licRes.rows.length === 0) {
+      return ctx.reply(`❌ لایسنس ${licCode} پیدا نشد.`);
+    }
+    const lic = licRes.rows[0];
+    if (!lic.used_by) {
+      return ctx.reply(`❌ لایسنس ${licCode} هنوز به کسب‌وکاری وصل نشده.\nابتدا باید فعال‌سازی انجام شده باشد.`);
+    }
+    const businessId = lic.used_by;
+
+    // ۲. کسب‌وکار
+    const bizRes = await query('SELECT * FROM businesses WHERE id = $1', [businessId]);
+    if (bizRes.rows.length === 0) {
+      return ctx.reply(`❌ کسب‌وکار #${businessId} پیدا نشد.`);
+    }
+    const biz = bizRes.rows[0];
+
+    // ۳. یافتن یا ساخت کاربر (non-destructive)
+    let userId;
+    const userRes = await query('SELECT id FROM users WHERE telegram_id = $1', [telegramId]);
+    if (userRes.rows.length > 0) {
+      userId = userRes.rows[0].id;
+    } else {
+      // کاربر هنوز در دیتابیس نیست — /start نزده
+      const newUser = await query(
+        'INSERT INTO users (telegram_id, name, role) VALUES ($1, $2, $3) RETURNING id',
+        [telegramId, 'مالک', 'owner']
+      );
+      userId = newUser.rows[0].id;
+    }
+
+    // ۴. به‌روزرسانی businesses.owner_id (non-destructive UPDATE)
+    await query('UPDATE businesses SET owner_id = $1 WHERE id = $2', [userId, businessId]);
+
+    // ۵. Upsert business_users برای این مالک (هیچ رکوردی حذف نمی‌شود)
+    await query(`
+      INSERT INTO business_users (business_id, user_id, role, permissions, is_active)
+      VALUES ($1, $2, 'business_owner', '["*"]'::jsonb, 1)
+      ON CONFLICT (business_id, user_id) DO UPDATE SET
+        role        = 'business_owner',
+        permissions = '["*"]'::jsonb,
+        is_active   = 1
+    `, [businessId, userId]);
+
+    const lines = [
+      '✅ ترمیم موفق انجام شد.',
+      '',
+      `لایسنس: ${licCode}`,
+      `کسب‌وکار: ${biz.name} (id=${businessId})`,
+      `Telegram ID: ${telegramId}`,
+      `users.id: ${userId}`,
+      '',
+      'کاربر می‌تواند /start بزند.',
+      'دیتای مالی دست‌نخورده ماند.',
+    ];
+    return ctx.reply(lines.join('\n'));
+  } catch (err) {
+    return ctx.reply(`❌ خطا: ${err.message}`);
+  }
+}
+
 module.exports = {
   handleStart,
   handleText,
@@ -3546,4 +3765,6 @@ module.exports = {
   handleDebugUser,
   handleDebugCounts,
   handleRepairBusinessUsers,
+  handleDebugLicense,
+  handleRepairLicenseOwner,
 };
