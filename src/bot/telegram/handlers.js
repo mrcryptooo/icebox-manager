@@ -3104,6 +3104,10 @@ async function handleText(ctx) {
   const userId = ctx.from.id;
   const session = getSession(userId);
 
+  // دستورات /command توسط bot.command() handlers جداگانه پردازش می‌شوند.
+  // اگر handleText هم اجرا شود، از دوباره پردازش کردن آن‌ها خودداری می‌کند.
+  if (text && text.startsWith('/')) return;
+
   // ── بارگذاری biz context اگر موجود نیست (مثلاً بعد از restart سرور) ─────────
   // super_admin باید همیشه منوی کامل را داشته باشد، حتی بدون /start مجدد
   if (!session.biz && isSuperAdmin(ctx)) {
@@ -3411,7 +3415,7 @@ async function handleUnregistered(ctx) {
 // /debug_user [telegram_id] — فقط super_admin
 // ═══════════════════════════════════════════════════════════════════════════════
 async function handleDebugUser(ctx) {
-  if (!isSuperAdmin(ctx)) return;
+  if (!isSuperAdmin(ctx)) { return ctx.reply('شما اجازه اجرای این دستور را ندارید.').catch(() => {}); }
   const parts    = (ctx.message.text || '').trim().split(/\s+/);
   const targetId = parts[1] ? Number(parts[1]) : null;
 
@@ -3469,7 +3473,7 @@ async function handleDebugUser(ctx) {
 // /debug_counts — فقط super_admin
 // ═══════════════════════════════════════════════════════════════════════════════
 async function handleDebugCounts(ctx) {
-  if (!isSuperAdmin(ctx)) return;
+  if (!isSuperAdmin(ctx)) { return ctx.reply('شما اجازه اجرای این دستور را ندارید.').catch(() => {}); }
 
   try {
     const tables = [
@@ -3523,7 +3527,7 @@ async function handleDebugCounts(ctx) {
 // فقط INSERT/ON CONFLICT — هیچ DELETE انجام نمی‌دهد
 // ═══════════════════════════════════════════════════════════════════════════════
 async function handleRepairBusinessUsers(ctx) {
-  if (!isSuperAdmin(ctx)) return;
+  if (!isSuperAdmin(ctx)) { return ctx.reply('شما اجازه اجرای این دستور را ندارید.').catch(() => {}); }
 
   try {
     const beforeRes = await query(`
@@ -3567,70 +3571,83 @@ async function handleRepairBusinessUsers(ctx) {
 // /debug_license CODE — بررسی کامل یک لایسنس فقط برای super_admin
 // ═══════════════════════════════════════════════════════════════════════════════
 async function handleDebugLicense(ctx) {
-  if (!isSuperAdmin(ctx)) return;
-  const parts = (ctx.message.text || '').trim().split(/\s+/);
-  const code  = parts[1] ? parts[1].toUpperCase() : null;
+  if (!isSuperAdmin(ctx)) {
+    return ctx.reply('شما اجازه اجرای این دستور را ندارید.').catch(() => {});
+  }
+
+  const rawText = ctx.message?.text || '';
+  const parts   = rawText.trim().split(/\s+/);
+  // parts[0] = '/debug_license' (یا '/debug_license@BotName')
+  const code    = parts[1] ? parts[1].trim().toUpperCase() : null;
 
   if (!code) {
-    return ctx.reply('فرمت:\n/debug_license ICE-XXXX-XXXX');
+    return ctx.reply('فرمت درست:\n/debug_license ICE-XXXX-XXXX').catch(() => {});
   }
 
   try {
-    const licRes = await query('SELECT * FROM licenses WHERE code = $1', [code]);
+    // ۱. لایسنس
+    const licRes = await query('SELECT id, code, used_by, created_at, used_at FROM licenses WHERE code = $1', [code]);
     if (licRes.rows.length === 0) {
-      return ctx.reply(`❌ لایسنس ${code} در دیتابیس وجود ندارد.`);
+      return ctx.reply(`لایسنس پیدا نشد: ${code}`);
     }
     const lic = licRes.rows[0];
 
     const lines = [
-      `🔑 لایسنس: ${lic.code}`,
-      `📌 وضعیت: ${lic.used_by ? 'استفاده‌شده' : 'آزاد'}`,
-      `🏢 Business ID: ${lic.used_by || '—'}`,
-      `📅 ساخته: ${lic.created_at ? new Date(lic.created_at).toLocaleDateString('fa-IR') : '—'}`,
-      `📅 فعال‌شده: ${lic.used_at ? new Date(lic.used_at).toLocaleDateString('fa-IR') : '—'}`,
+      `--- بررسی لایسنس ---`,
+      `کد: ${lic.code}`,
+      `وضعیت: ${lic.used_by ? 'استفاده‌شده' : 'آزاد'}`,
+      `Business ID: ${lic.used_by != null ? lic.used_by : '(ندارد)'}`,
+      `ساخته‌شده: ${lic.created_at ? String(lic.created_at).slice(0, 10) : '—'}`,
+      `فعال‌شده: ${lic.used_at ? String(lic.used_at).slice(0, 10) : '—'}`,
       '',
     ];
 
-    if (!lic.used_by) {
-      lines.push('ℹ️ این لایسنس هنوز به کسب‌وکاری وصل نشده.');
+    if (lic.used_by == null) {
+      lines.push('این لایسنس هنوز به کسب‌وکاری وصل نشده.');
       return ctx.reply(lines.join('\n'));
     }
 
-    // کسب‌وکار
-    const bizRes = await query('SELECT * FROM businesses WHERE id = $1', [lic.used_by]);
+    // ۲. کسب‌وکار
+    const bizRes = await query(
+      'SELECT id, name, type, city, is_active, owner_id FROM businesses WHERE id = $1',
+      [lic.used_by]
+    );
     if (bizRes.rows.length === 0) {
-      lines.push('❌ کسب‌وکار مرتبط پیدا نشد — دیتا ناسازگار!');
+      lines.push('خطا: کسب‌وکار مرتبط پیدا نشد!');
       return ctx.reply(lines.join('\n'));
     }
     const biz = bizRes.rows[0];
-    lines.push(`📊 کسب‌وکار: ${biz.name} (id=${biz.id})`);
-    lines.push(`  نوع: ${biz.type || '—'}  شهر: ${biz.city || '—'}`);
-    lines.push(`  is_active: ${biz.is_active}`);
-    lines.push(`  owner_id (users.id): ${biz.owner_id || '—'}`);
+    lines.push(`--- کسب‌وکار ---`);
+    lines.push(`نام: ${biz.name}`);
+    lines.push(`شناسه: ${biz.id}`);
+    lines.push(`نوع: ${biz.type || '—'}  شهر: ${biz.city || '—'}`);
+    lines.push(`فعال: ${biz.is_active == 1 ? 'بله' : 'خیر'}`);
+    lines.push(`owner_id (users.id): ${biz.owner_id != null ? biz.owner_id : '(ندارد)'}`);
     lines.push('');
 
-    // مالک
-    if (biz.owner_id) {
+    // ۳. مالک
+    if (biz.owner_id != null) {
       const ownerRes = await query(
         'SELECT id, telegram_id, name FROM users WHERE id = $1',
         [biz.owner_id]
       );
       if (ownerRes.rows.length > 0) {
         const owner = ownerRes.rows[0];
-        lines.push(`👤 مالک ثبت‌شده:`);
-        lines.push(`  نام: ${owner.name || '—'}`);
-        lines.push(`  telegram_id: ${owner.telegram_id}`);
+        lines.push(`--- مالک ---`);
+        lines.push(`نام: ${owner.name || '—'}`);
+        lines.push(`telegram_id: ${owner.telegram_id}`);
+        lines.push(`users.id: ${owner.id}`);
         lines.push('');
       } else {
-        lines.push(`❌ مالک (users.id=${biz.owner_id}) در جدول users پیدا نشد!`);
+        lines.push(`خطا: مالک (users.id=${biz.owner_id}) در جدول users نیست!`);
         lines.push('');
       }
     } else {
-      lines.push('⚠️ این کسب‌وکار owner_id ندارد!');
+      lines.push('هشدار: این کسب‌وکار owner_id ندارد!');
       lines.push('');
     }
 
-    // اعضای کسب‌وکار
+    // ۴. اعضای کسب‌وکار
     const buRes = await query(`
       SELECT bu.id, bu.user_id, bu.role, bu.is_active,
              u.telegram_id, u.name
@@ -3640,39 +3657,51 @@ async function handleDebugLicense(ctx) {
       ORDER BY bu.is_active DESC, bu.id
     `, [lic.used_by]);
 
-    lines.push(`👥 اعضا (${buRes.rows.length} نفر):`);
+    lines.push(`--- اعضا (${buRes.rows.length} نفر) ---`);
     if (buRes.rows.length === 0) {
-      lines.push('  ❌ هیچ عضوی ندارد — /repair_business_users یا /repair_license_owner لازم است!');
+      lines.push('هیچ عضوی ندارد — از repair_license_owner استفاده کنید!');
     } else {
       for (const bu of buRes.rows) {
-        const act = bu.is_active == 1 ? '✅' : '❌';
-        lines.push(`  ${act} ${bu.role} — tg:${bu.telegram_id || '—'} (users.id=${bu.user_id})`);
+        const activeStr = bu.is_active == 1 ? 'فعال' : 'غیرفعال';
+        lines.push(`  ${bu.role} | ${activeStr} | tg:${bu.telegram_id || '—'}`);
       }
     }
     lines.push('');
 
-    // دیتای مالی
+    // ۵. دیتای مالی
     const [salesCnt, expCnt, brCnt, supCnt, invCnt, payrollCnt] = await Promise.all([
-      query('SELECT COUNT(*) AS c FROM sales WHERE business_id = $1 AND deleted_at IS NULL', [lic.used_by]),
-      query('SELECT COUNT(*) AS c FROM expenses WHERE business_id = $1 AND deleted_at IS NULL', [lic.used_by]),
-      query('SELECT COUNT(*) AS c FROM branches WHERE business_id = $1', [lic.used_by]),
-      query('SELECT COUNT(*) AS c FROM suppliers WHERE business_id = $1', [lic.used_by]),
-      query('SELECT COUNT(*) AS c FROM inventory_items WHERE business_id = $1', [lic.used_by]),
-      query('SELECT COUNT(*) AS c FROM payroll_profiles WHERE business_id = $1', [lic.used_by]),
+      query('SELECT COUNT(*) AS c FROM sales    WHERE business_id=$1 AND deleted_at IS NULL', [lic.used_by]),
+      query('SELECT COUNT(*) AS c FROM expenses WHERE business_id=$1 AND deleted_at IS NULL', [lic.used_by]),
+      query('SELECT COUNT(*) AS c FROM branches WHERE business_id=$1', [lic.used_by]),
+      query('SELECT COUNT(*) AS c FROM suppliers WHERE business_id=$1', [lic.used_by]),
+      query('SELECT COUNT(*) AS c FROM inventory_items WHERE business_id=$1', [lic.used_by]),
+      query('SELECT COUNT(*) AS c FROM payroll_profiles WHERE business_id=$1', [lic.used_by]),
     ]);
 
-    lines.push('📊 دیتای مالی:');
-    lines.push(`  فروش: ${salesCnt.rows[0].c}`);
-    lines.push(`  مخارج: ${expCnt.rows[0].c}`);
-    lines.push(`  شعبه: ${brCnt.rows[0].c}`);
-    lines.push(`  تأمین‌کننده: ${supCnt.rows[0].c}`);
-    lines.push(`  انبار: ${invCnt.rows[0].c}`);
-    lines.push(`  پروفایل حقوقی: ${payrollCnt.rows[0].c}`);
+    lines.push(`--- دیتای مالی ---`);
+    lines.push(`فروش: ${salesCnt.rows[0].c}`);
+    lines.push(`مخارج: ${expCnt.rows[0].c}`);
+    lines.push(`شعبه: ${brCnt.rows[0].c}`);
+    lines.push(`تامین‌کننده: ${supCnt.rows[0].c}`);
+    lines.push(`انبار: ${invCnt.rows[0].c}`);
+    lines.push(`پروفایل حقوقی: ${payrollCnt.rows[0].c}`);
 
     return ctx.reply(lines.join('\n'));
+
   } catch (err) {
-    return ctx.reply(`❌ خطا: ${err.message}`);
+    console.error('[debug_license] خطا:', err.message);
+    return ctx.reply('خطا در اجرای debug_license. لطفاً Railway Logs را بررسی کنید.').catch(() => {});
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// /debug_ping — تست ساده برای بررسی اینکه دستورات debug فعال‌اند (super_admin)
+// ═══════════════════════════════════════════════════════════════════════════════
+async function handleDebugPing(ctx) {
+  if (!isSuperAdmin(ctx)) {
+    return ctx.reply('شما اجازه اجرای این دستور را ندارید.').catch(() => {});
+  }
+  return ctx.reply('debug فعال است. ربات در حال اجرا است.').catch(() => {});
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -3680,7 +3709,9 @@ async function handleDebugLicense(ctx) {
 // فقط super_admin — هیچ دیتای مالی دست نمی‌خورد
 // ═══════════════════════════════════════════════════════════════════════════════
 async function handleRepairLicenseOwner(ctx) {
-  if (!isSuperAdmin(ctx)) return;
+  if (!isSuperAdmin(ctx)) {
+    return ctx.reply('شما اجازه اجرای این دستور را ندارید.').catch(() => {});
+  }
   const parts      = (ctx.message.text || '').trim().split(/\s+/);
   const licCode    = parts[1] ? parts[1].toUpperCase() : null;
   const telegramId = parts[2] ? Number(parts[2]) : null;
@@ -3767,4 +3798,5 @@ module.exports = {
   handleRepairBusinessUsers,
   handleDebugLicense,
   handleRepairLicenseOwner,
+  handleDebugPing,
 };

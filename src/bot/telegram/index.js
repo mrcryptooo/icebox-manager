@@ -4,7 +4,7 @@ const {
   handleStart, handleText, handleId, handleHealth,
   handleExportCommand, handleQaAccounting,
   handleDebugUser, handleDebugCounts, handleRepairBusinessUsers,
-  handleDebugLicense, handleRepairLicenseOwner,
+  handleDebugLicense, handleRepairLicenseOwner, handleDebugPing,
 } = require('./handlers');
 const { initDatabase } = require('../../db/database');
 const MSG = require('./messages');
@@ -99,6 +99,7 @@ async function main() {
   bot.command('repair_business_users',   handleRepairBusinessUsers);
   bot.command('debug_license',           handleDebugLicense);
   bot.command('repair_license_owner',    handleRepairLicenseOwner);
+  bot.command('debug_ping',              handleDebugPing);
 
   bot.on('text', handleText);
 
